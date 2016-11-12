@@ -14,7 +14,9 @@
 	(member char alphabet))))
 
 (defun acceptable-encoding-modes (string &optional (auto-upcase-string nil))
-  "Checks STRING against all encoding modes and returns an alist with the encoding modes as keys and their suitability as values. For now, :byte-mode is only set to t if alphanumeric is unsuitable."
+  "Checks STRING against all encoding modes and returns an alist with the encoding modes as keys
+and their suitability as values. For now, :byte-mode is only set to t if alphanumeric is
+  unsuitable."
   (let* ((char-sequence (map 'list #'character (if auto-upcase-string
 						   (string-upcase string)
 						   string)))
@@ -47,7 +49,8 @@
     (padded-binary encoding-mode-indicator 4)))
 
 (defun get-qr-version (string-length error-correction-mode encoding-mode)
-  "Determines the suitable QR code version for a string whose length is STRING-LENGTH, given its error correction-mode and encoding mode."
+  "Determines the suitable QR code version for a string whose length is STRING-LENGTH, given its
+error correction-mode and encoding mode."
   (loop for version from 1 upto 40
      for version-level = (assocval version *character-capacities*)
      for correction-level = (assocval error-correction-mode version-level)
@@ -73,7 +76,8 @@
 		 (character-count-indicator-length version encoding-mode)))
 
 (defun split-string-into-blocks (string block-size)
-  "Split STRING into chunks of BLOCK-SIZE characters. The final block may be smaller than BLOCK-SIZE. Returns the list of substrings."
+  "Split STRING into chunks of BLOCK-SIZE characters. The final block may be smaller than
+BLOCK-SIZE. Returns the list of substrings."
   (loop with string-length = (length string)
      for i = 0 then (+ i block-size)
        while (< i (- string-length block-size))
@@ -83,7 +87,8 @@
        (return (nconc split (list (subseq string i))))))
 
 (defun split-integer-to-blocks (integer &key (block-size 3))
-  "Split INTEGER in chunks of BLOCK-SIZE digits. The chunks are integers themselves. Returns the list of these integers."
+  "Split INTEGER in chunks of BLOCK-SIZE digits. The chunks are integers themselves. Returns the
+list of these integers."
   (let* ((string-data (format nil "~d" integer))
 	 (split-string (split-string-into-blocks string-data block-size)))
     (mapcar #'parse-integer split-string)))
@@ -137,18 +142,21 @@
 		 (assocval version *capacity*))))
 
 (defun terminator (string-length capacity)
-  "Terminator string that should be added at the end of an encoded string whose length is STRING-LENGTH to try and reach CAPACITY."
+  "Terminator string that should be added at the end of an encoded string whose length is 
+STRING-LENGTH to try and reach CAPACITY."
   (if (< string-length capacity)
       (padded-binary 0 (min 4 (- capacity string-length)))
       ""))
 
 (defun padding-to-multiple-of-eight (string-length)
-  "Padding string that should be added at the end of a terminated string whose length is STRING-LENGTH to make its length a multiple of 8."
+  "Padding string that should be added at the end of a terminated string whose length is 
+STRING-LENGTH to make its length a multiple of 8."
   (unless (zerop (rem string-length 8))
     (padded-binary 0 (- 8 (rem string-length 8)))))
 
 (defun filling-to-capacity (string-length capacity)
-  "Filling string that should be added at the end of a padded string whose length is STRING-LENGTH to make it reach CAPACITY."
+  "Filling string that should be added at the end of a padded string whose length is STRING-LENGTH 
+to make it reach CAPACITY."
   (let ((filling-bytes (alexandria:circular-list (padded-binary 236 8)
 						 (padded-binary 17 8)))
 	(bytes-to-fill (/ (- capacity string-length) 8)))
@@ -204,10 +212,11 @@
       0
       (assocval integer *log-antilog*)))
 
-(defvar *generator-polynomials*
+(defvar *generator-galois*
   (loop for i from 0 upto 35
      for pol = (list i 0) then (multiply-exponent-list (list i 0) pol)
-     collect (cons (1+ i) pol)))
+     collect (cons (1+ i) pol)) 
+  "Polynomials, in the Galois field, used as generators in the Reed-Solomon process.")
 
 (defun split-message-string (message)
   (mapcar (lambda (x) (parse-integer x :radix 2))
@@ -241,6 +250,11 @@
       nil
       (mod (reduce #'+ numbers) 255)))
 
+(defun select-generator-galois (version error-correction-mode)
+  (let ((generator-length (assocval error-correction-mode
+				    (assocval version *error-correction-codewords*))))
+    (assocval generator-length *generator-galois*)))
+
 (defun reed-solomon (message-poly generator-galois)
   (multiple-value-bind (mpo ggo) (prepare-polynomials message-poly generator-galois)
     (loop repeat (count-if-not #'zerop mpo)
@@ -248,4 +262,19 @@
        for mp = mpo then r1b
        for r1a = (step1a mp gg)
        for r1b = (step1b mp r1a)
-	 finally (return r1b))))
+	 finally (return (nreverse r1b)))))
+
+(defun group-message (message property-list)
+  (destructuring-bind (&key version error-correction-mode) property-list
+    (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
+	(assocval error-correction-mode (assocval version *block-information*))
+      (let ((group1  (loop for g1 from 1 upto blocks-in-grp1
+			for start = 0 then (+ start (* 8 words-in-block1))
+			for end = (* 8 words-in-block1) then (+ end (* 8 words-in-block1))
+			collect (subseq message start end))))
+	(list group1
+	      (when (not (zerop blocks-in-grp2))
+		(loop for g2 from 1 upto blocks-in-grp2
+		   for start = (* 8 blocks-in-grp1 words-in-block1) then (+ start (* 8 words-in-block2))
+		   for end = (+ start (* 8 words-in-block2)) then (+ end (* 8 words-in-block2))
+		   collect (subseq message start end))))))))
