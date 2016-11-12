@@ -223,7 +223,7 @@ to make it reach CAPACITY."
 	  (split-string-into-blocks message 8)))
 
 (defun message-polynomial (message)
-  (reverse (split-message-string message)))
+  (nreverse (split-message-string message)))
 
 (defun shift-polynomial (polynomial n)
   (multiply polynomial
@@ -262,19 +262,76 @@ to make it reach CAPACITY."
        for mp = mpo then r1b
        for r1a = (step1a mp gg)
        for r1b = (step1b mp r1a)
-	 finally (return (nreverse r1b)))))
+       finally (return (nreverse r1b)))))
+
+(defun submessage-to-int (submessage)
+  (split-message-string submessage))
 
 (defun group-message (message property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
     (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
 	(assocval error-correction-mode (assocval version *block-information*))
-      (let ((group1  (loop for g1 from 1 upto blocks-in-grp1
-			for start = 0 then (+ start (* 8 words-in-block1))
-			for end = (* 8 words-in-block1) then (+ end (* 8 words-in-block1))
-			collect (subseq message start end))))
-	(list group1
-	      (when (not (zerop blocks-in-grp2))
-		(loop for g2 from 1 upto blocks-in-grp2
-		   for start = (* 8 blocks-in-grp1 words-in-block1) then (+ start (* 8 words-in-block2))
-		   for end = (+ start (* 8 words-in-block2)) then (+ end (* 8 words-in-block2))
-		   collect (subseq message start end))))))))
+      (flet ((cut-into-chunks (word-size start-value)
+	       (loop for g1 from 1 upto blocks-in-grp1
+		  for start = start-value then (+ start word-size)
+		  for end = (+ start-value word-size) then (+ end word-size)
+		  collect (subseq message start end))))
+	(let ((group1 (cut-into-chunks (* 8 words-in-block1) 0)))
+	  (if (zerop blocks-in-grp2)
+	      (list group1)
+	      (list group1
+		    (cut-into-chunks (* 8 words-in-block2)
+				     (* 8 blocks-in-grp1 words-in-block1)))))))))
+
+(defun chunks-to-polynomials (chunks)
+  (loop for group in chunks collect
+       (loop for this-block in group
+	    collect (message-polynomial this-block))))
+
+(defun small-qr-code-p (property-list)
+  (destructuring-bind (&key version error-correction-mode) property-list
+    (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
+	(assocval error-correction-mode (assocval version *block-information*))
+      (declare (ignorable blocks-in-grp2 words-in-block1 words-in-block2))
+     (= 1 blocks-in-grp1))))
+
+(defun correction-codewords (chunked-polynomials property-list)
+  (destructuring-bind (&key version error-correction-mode) property-list
+    (let ((result nil)
+	  (helper nil))
+      (dolist (group chunked-polynomials (nreverse result))
+	(dolist (polynomial group)
+	  (push (reed-solomon polynomial
+			      (select-generator-galois version error-correction-mode))
+		helper))
+	(push (nreverse helper) result)
+	(setf helper nil)))))
+
+(defun interleave-blocks (groups)
+  (let ((blocks (loop for group in groups nconc
+		     (loop for this-block in group collect this-block))))
+    (loop for i below (apply #'max (mapcar #'length blocks))
+       nconc (loop for this-block in blocks
+		collect (nth i this-block)) into result
+       finally
+	 (return (remove-if #'null result)))))
+
+(defun structure-message (chunked-polynomials correction-codewords property-list)
+  (flet ((reverse-poly ()
+	   (loop for group in chunked-polynomials collect
+		(loop for poly in group collect
+		     (reverse poly)))))
+   (if (small-qr-code-p property-list)
+       (alexandria:flatten (nconc (reverse-poly) correction-codewords))
+       (nconc (interleave-blocks (reverse-poly))
+	      (interleave-blocks correction-codewords)))))
+
+(defparameter text "HELLO WORLD MANGE MON CUL & MARCHE A LOMBRE")
+(defparameter level "M")
+(multiple-value-bind (msg plist) (string-to-message text level)
+  (let* ((chunked-poly
+	  (chunks-to-polynomials (group-message msg plist))))
+    (format t "~a~%" chunked-poly)
+    (structure-message chunked-poly
+		       (correction-codewords chunked-poly plist)
+		       plist)))
