@@ -14,7 +14,7 @@
 	(member char alphabet))))
 
 (defun acceptable-encoding-modes (string &optional (auto-upcase-string nil))
-  "Checks the string agains all encoding modes and returns an alist with the encoding modes as keys and their suitability as values."
+  "Checks STRING against all encoding modes and returns an alist with the encoding modes as keys and their suitability as values. For now, :byte-mode is only set to t if alphanumeric is unsuitable."
   (let* ((char-sequence (map 'list #'character (if auto-upcase-string
 						   (string-upcase string)
 						   string)))
@@ -26,7 +26,7 @@
 	  (cons :byte-mode byte-mode))))
 
 (defun find-encoding-mode (string)
-  "Determines the appropriate encoding mode for string."
+  "Determines the appropriate encoding mode for STRING."
   (loop with modes = (acceptable-encoding-modes string)
      for try-mode in *encoding-modes*
      for (this-mode . possible) = (assoc try-mode modes) do
@@ -42,10 +42,12 @@
 	(t (error "Unrecognized error correction level. Must be one of (L M Q H)"))))
 
 (defun encoding-mode-indicator (encoding-mode)
+  "Represents the encoding mode indicator on a 4-bit string."
   (let ((encoding-mode-indicator (assocval encoding-mode *encoding-mode-indicators*)))
     (padded-binary encoding-mode-indicator 4)))
 
 (defun get-qr-version (string-length error-correction-mode encoding-mode)
+  "Determines the suitable QR code version for a string whose length is STRING-LENGTH, given its error correction-mode and encoding mode."
   (loop for version from 1 upto 40
      for version-level = (assocval version *character-capacities*)
      for correction-level = (assocval error-correction-mode version-level)
@@ -59,6 +61,7 @@
     (get-qr-version length error-correction-mode encoding-mode)))
 
 (defun padded-binary (decimal-number width)
+  "Represents DECIMAL-NUMBER in binary, with a 0 padding to the left until WIDTH is reached."
   (format nil "~v,'0b" width decimal-number))
 
 (defun character-count-indicator-length (version encoding-mode)
@@ -70,6 +73,7 @@
 		 (character-count-indicator-length version encoding-mode)))
 
 (defun split-string-into-blocks (string block-size)
+  "Split STRING into chunks of BLOCK-SIZE characters. The final block may be smaller than BLOCK-SIZE. Returns the list of substrings."
   (loop with string-length = (length string)
      for i = 0 then (+ i block-size)
        while (< i (- string-length block-size))
@@ -79,17 +83,36 @@
        (return (nconc split (list (subseq string i))))))
 
 (defun split-integer-to-blocks (integer &key (block-size 3))
+  "Split INTEGER in chunks of BLOCK-SIZE digits. The chunks are integers themselves. Returns the list of these integers."
   (let* ((string-data (format nil "~d" integer))
 	 (split-string (split-string-into-blocks string-data block-size)))
     (mapcar #'parse-integer split-string)))
 
 (defun represent-substring (substring)
+  "Represent SUBSTRING for :alphanumeric-mode. These substrings are 1 or 2 characters long."
   (ecase (length substring)
     (1 (padded-binary (assocval (char substring 0) *alphanumeric-encoding*)
 		      6))
     (2 (padded-binary (+ (* 45 (assocval (char substring 0) *alphanumeric-encoding*))
 			 (assocval (char substring 1) *alphanumeric-encoding*))
 		      11))))
+
+(defgeneric encode-data (data encoding-mode)
+  (:documentation "Represent DATA as a string of binary numbers."))
+
+(defmethod encode-data ((data integer) (encoding-mode (eql :numeric-mode)))
+  (format nil "~{~b~}" (split-integer-to-blocks data)))
+
+(defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
+  (format nil "~{~b~}" (mapcar #'parse-integer
+			       (split-string-into-blocks data 3))))
+
+(defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
+  (let ((substrings (split-string-into-blocks data 2)))
+    (format nil "~{~b~}" (map 'list #'represent-substring substrings))))
+
+(defmethod encode-data ((data string) (encoding-mode (eql :byte-mode)))
+  (format nil "~{~8,'0b~}" (map 'list #'char-code data)))
 
 (defun string-to-message (string correction-mode)
   (let* ((length (length string))
@@ -108,37 +131,24 @@
      (format nil "~a~a" padded-data (filling-to-capacity (length padded-data) capacity))
      (list :version version :error-correction-mode error-correction-mode))))
 
-(defgeneric encode-data (data encoding-mode)
-  (:documentation "Represent the data as a string of binary numbers."))
-
-(defmethod encode-data ((data integer) (encoding-mode (eql :numeric-mode)))
-  (format nil "~{~b~}" (split-integer-to-blocks data)))
-
-(defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
-  (format nil "~{~b~}" (mapcar #'parse-integer
-			       (split-string-into-blocks data 3))))
-
-(defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
-  (let ((substrings (split-string-into-blocks data 2)))
-    (format nil "~{~b~}" (map 'list #'represent-substring substrings))))
-
-(defmethod encode-data ((data string) (encoding-mode (eql :byte-mode)))
-  (format nil "~{~8,'0b~}" (map 'list #'char-code data)))
-
 (defun qr-capacity (version error-correction-mode)
+  "Number of bits required to fill a QR code of given VERSION with given ERROR-CORRECTION-MODE."
   (* 8 (assocval error-correction-mode
 		 (assocval version *capacity*))))
 
 (defun terminator (string-length capacity)
+  "Terminator string that should be added at the end of an encoded string whose length is STRING-LENGTH to try and reach CAPACITY."
   (if (< string-length capacity)
       (padded-binary 0 (min 4 (- capacity string-length)))
       ""))
 
 (defun padding-to-multiple-of-eight (string-length)
+  "Padding string that should be added at the end of a terminated string whose length is STRING-LENGTH to make its length a multiple of 8."
   (unless (zerop (rem string-length 8))
     (padded-binary 0 (- 8 (rem string-length 8)))))
 
 (defun filling-to-capacity (string-length capacity)
+  "Filling string that should be added at the end of a padded string whose length is STRING-LENGTH to make it reach CAPACITY."
   (let ((filling-bytes (alexandria:circular-list (padded-binary 236 8)
 						 (padded-binary 17 8)))
 	(bytes-to-fill (/ (- capacity string-length) 8)))
