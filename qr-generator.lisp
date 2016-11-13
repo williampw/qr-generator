@@ -13,27 +13,16 @@
     (or (numeric-mode-p char)
 	(member char alphabet))))
 
-(defun acceptable-encoding-modes (string &optional (auto-upcase-string nil))
-  "Checks STRING against all encoding modes and returns an alist with the encoding modes as keys
-and their suitability as values. For now, :byte-mode is only set to t if alphanumeric is
-  unsuitable."
+(defun determine-encoding-mode (string &optional (auto-upcase-string nil))
+  "Checks STRING against all encoding modes and returns the suitable encoding mode. For now,
+:byte-mode is only set to t if alphanumeric is unsuitable."
   (let* ((char-sequence (map 'list #'character (if auto-upcase-string
 						   (string-upcase string)
-						   string)))
-	 (numeric-mode (every #'numeric-mode-p char-sequence))
-	 (alphanumeric-mode (every #'alphanumeric-mode-p char-sequence))
-	 (byte-mode (not alphanumeric-mode)))
-    (list (cons :numeric-mode numeric-mode)
-	  (cons :alphanumeric-mode alphanumeric-mode)
-	  (cons :byte-mode byte-mode))))
-
-(defun find-encoding-mode (string)
-  "Determines the appropriate encoding mode for STRING."
-  (loop with modes = (acceptable-encoding-modes string)
-     for try-mode in *encoding-modes*
-     for (this-mode . possible) = (assoc try-mode modes) do
-       (if possible
-	   (return this-mode))))
+						   string))))
+    (cond
+      ((every #'numeric-mode-p char-sequence) :numeric-mode)
+      ((every #'alphanumeric-mode-p char-sequence) :alphanumeric-mode)
+      (t :byte-mode))))
 
 (defun choose-error-correction (level)
   (assert (= 1 (length level)))
@@ -60,7 +49,7 @@ error correction-mode and encoding mode."
 
 (defun get-qr-version-from-string (string error-correction-mode)
   (let ((length (length string))
-	(encoding-mode (find-encoding-mode string)))
+	(encoding-mode (determine-encoding-mode string)))
     (get-qr-version length error-correction-mode encoding-mode)))
 
 (defun padded-binary (decimal-number width)
@@ -75,54 +64,43 @@ error correction-mode and encoding mode."
   (padded-binary string-length
 		 (character-count-indicator-length version encoding-mode)))
 
-(defun split-string-into-blocks (string block-size)
-  "Split STRING into chunks of BLOCK-SIZE characters. The final block may be smaller than
-BLOCK-SIZE. Returns the list of substrings."
-  (loop with string-length = (length string)
-     for i = 0 then (+ i block-size)
-       while (< i (- string-length block-size))
-       for substring = (subseq string i (+ i block-size))
-       collect substring into split
-       finally
-       (return (nconc split (list (subseq string i))))))
-
-(defun split-integer-to-blocks (integer &key (block-size 3))
-  "Split INTEGER in chunks of BLOCK-SIZE digits. The chunks are integers themselves. Returns the
-list of these integers."
-  (let* ((string-data (format nil "~d" integer))
-	 (split-string (split-string-into-blocks string-data block-size)))
-    (mapcar #'parse-integer split-string)))
-
-(defun represent-substring (substring)
-  "Represent SUBSTRING for :alphanumeric-mode. These substrings are 1 or 2 characters long."
-  (ecase (length substring)
-    (1 (padded-binary (assocval (char substring 0) *alphanumeric-encoding*)
-		      6))
-    (2 (padded-binary (+ (* 45 (assocval (char substring 0) *alphanumeric-encoding*))
-			 (assocval (char substring 1) *alphanumeric-encoding*))
-		      11))))
+(defun chunk-string (string chunk-size)
+  "Split STRING into chunks of CHUNK-SIZE characters. The final block may be smaller than
+CHUNK-SIZE. Returns the list of substrings."
+  (do ((start 0 (+ start chunk-size))
+       (end chunk-size (+ end chunk-size))
+       (end-max (1- (length string)))
+       (result nil))
+      ((> end end-max) (append (nreverse result) (list (subseq string start))))
+    (push (subseq string start end) result)))
 
 (defgeneric encode-data (data encoding-mode)
   (:documentation "Represent DATA as a string of binary numbers."))
 
-(defmethod encode-data ((data integer) (encoding-mode (eql :numeric-mode)))
-  (format nil "~{~b~}" (split-integer-to-blocks data)))
-
 (defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
   (format nil "~{~b~}" (mapcar #'parse-integer
-			       (split-string-into-blocks data 3))))
+			       (chunk-string data 3))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
-  (let ((substrings (split-string-into-blocks data 2)))
-    (format nil "~{~b~}" (mapcar #'represent-substring substrings))))
+  (flet ((represent-substring (substring)
+	   (ecase (length substring)
+	     ((1)
+	      (padded-binary (assocval (char substring 0) *alphanumeric-encoding*)
+			     6))
+	     ((2)
+	      (padded-binary (+ (* 45 (assocval (char substring 0) *alphanumeric-encoding*))
+				(assocval (char substring 1) *alphanumeric-encoding*))
+			     11)))))
+    (let ((substrings (chunk-string data 2)))
+      (format nil "~{~b~}" (mapcar #'represent-substring substrings)))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :byte-mode)))
   (format nil "~{~8,'0b~}" (mapcar #'char-code data)))
 
-(defun string-to-message (string correction-mode)
+(defun string-to-message (string correction-level)
   (let* ((length (length string))
-	 (encoding-mode (find-encoding-mode string))
-	 (error-correction-mode (choose-error-correction correction-mode))
+	 (encoding-mode (determine-encoding-mode string))
+	 (error-correction-mode (choose-error-correction correction-level))
 	 (version (get-qr-version-from-string string error-correction-mode))
 	 (capacity (qr-capacity version error-correction-mode))
 	 (mode-indicator (encoding-mode-indicator encoding-mode))
@@ -220,7 +198,7 @@ to make it reach CAPACITY."
 
 (defun split-message-string (message)
   (mapcar (lambda (x) (parse-integer x :radix 2))
-	  (split-string-into-blocks message 8)))
+	  (chunk-string message 8)))
 
 (defun message-polynomial (message)
   (nreverse (split-message-string message)))

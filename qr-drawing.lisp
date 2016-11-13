@@ -5,7 +5,7 @@
 
 (defun alignment-pattern-positions (version)
   (let ((grid (aref *alignment-pattern-centers* (1- version))))
-    (alexandria:map-product #'list grid grid)))
+    (alexandria:map-product (lambda (x y) (make-instance 'point :x x :y y)) grid grid)))
 
 (defun between-values (x min max &key (test-min #'<=) (test-max #'<))
   (and (funcall test-min min x) (funcall test-max x max)))
@@ -73,17 +73,17 @@
 (defclass qr-code ()
   ((version :initarg :version
 	    :initform (error "Must supply the version of the QR code."))
-   (content :initarg :content)
-   (size)))
+   (content :initarg :content
+	    :reader content)
+   (size :reader size)))
+
+
 
 (defmethod initialize-instance :after ((object qr-code) &key)
   (with-slots (size version content) object
     (setf size (qr-code-size version))
-    (setf content
-	  (loop for location in '(top-left top-right bottom-left)
-	     for fp = (make-instance 'finder-pattern)
-	     do (set-location location fp version)
-	     collect fp))))
+      (setf content (add-finder-patterns version))
+      (setf content (append content (add-alignment-patterns content version)))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -273,6 +273,30 @@ specialized on `point'."
 	    (top-right (make-instance 'point
 				      :y (+ (* 4 (1- parent-version)) 14)
 				      :x 0))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; QR code buiding happens here
+
+(defun add-finder-patterns (version)
+  (loop for location in '(top-left top-right bottom-left)
+     for fp = (make-instance 'finder-pattern)
+     do (set-location location fp version)
+     collect fp))
+
+(defun add-alignment-patterns (content version)
+  (flet ((overlaps-with-finders (pattern)
+	   (loop for finder in (subseq content 0 3)
+	      thereis (overlap-p finder pattern))))
+    (loop for ali = (make-instance 'alignment-pattern)
+       for possible-pos in (alignment-pattern-positions version)
+       do (set-position ali possible-pos)
+       unless (overlaps-with-finders ali)
+       collect ali)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Rendering functions : to turn things into beautiful pixels
 
 (defgeneric pixelize (object module-size &key canvas)
   (:documentation "Render OBJECT in pixels knowing that a module measures MODULE-SIZE pixels."))
@@ -295,16 +319,17 @@ specialized on `point'."
 
 (defun color-value (color)
   (ecase color
-    (white 1)
+    (white 255)
     (black 0)
-    (t 2)))
+    (t 127)))
 
 
 (defmethod pixelize ((object qr-code) module-size &key canvas)
   (with-slots (size content) object
     (let* ((pixel-side (* module-size size))
 	   (canvas (or canvas (make-array (list pixel-side pixel-side)
-					  :initial-element (color-value t)))))
+					  :initial-element (color-value t)
+					  :element-type '(unsigned-byte 8)))))
       (loop for shape in content
 	 for cv = (pixelize shape module-size :canvas canvas)
 	 then (pixelize shape module-size :canvas cv))
@@ -313,9 +338,22 @@ specialized on `point'."
 
 (defun print-to-file (qr-code module-size file)
   (with-open-file (out file :direction :output :if-exists :supersede)
-    (loop with px = (pixelize qr-code module-size)
-       with (rows cols) = (array-dimensions px)
-       for row below rows
-       do (loop for col below cols do
-	       (format out "~d" (aref px row col)))
-	 (format out "~%"))))
+    (let* ((px (pixelize qr-code module-size))
+	   (rows-cols (array-dimensions px)))
+      (loop for row below (first rows-cols)
+		do (loop for col below (second rows-cols) do
+			(format out "~d" (aref px row col)))
+		  (format out "~%")))))
+
+(defun print-to-png (qr-code module-size file)
+  (let* ((png-size (* (size qr-code) module-size))
+	 (px (make-array (* png-size png-size)
+			 :element-type '(unsigned-byte 8)
+			 :initial-contents (array-operations:flatten
+					    (pixelize qr-code module-size))))
+	 (png (make-instance 'zpng:png
+                             :color-type :grayscale
+                             :width png-size
+                             :height png-size
+			     :image-data px)))    
+    (zpng:write-png png file)))
