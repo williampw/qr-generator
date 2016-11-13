@@ -8,5 +8,6 @@
   :serial t
   :components ((:file "package")
 	       (:file "qr-tables")
-               (:file "qr-generator")))
+               (:file "qr-generator")
+	       (:file "qr-drawing")))
 

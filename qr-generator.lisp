@@ -297,15 +297,10 @@ to make it reach CAPACITY."
 
 (defun correction-codewords (chunked-polynomials property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
-    (let ((result nil)
-	  (helper nil))
-      (dolist (group chunked-polynomials (nreverse result))
-	(dolist (polynomial group)
-	  (push (reed-solomon polynomial
-			      (select-generator-galois version error-correction-mode))
-		helper))
-	(push (nreverse helper) result)
-	(setf helper nil)))))
+    (loop for group in chunked-polynomials collect
+	 (loop for poly in group collect
+	      (reed-solomon poly
+			    (select-generator-galois version error-correction-mode))))))
 
 (defun interleave-blocks (groups)
   (let ((blocks (loop for group in groups nconc
@@ -335,3 +330,34 @@ to make it reach CAPACITY."
     (structure-message chunked-poly
 		       (correction-codewords chunked-poly plist)
 		       plist)))
+(defvar test5 "0100001101010101010001101000011001010111001001100101010111000010011101110011001000000110000100100000011001100111001001101111011011110110010000100000011101110110100001101111001000000111001001100101011000010110110001101100011110010010000001101011011011100110111101110111011100110010000001110111011010000110010101110010011001010010000001101000011010010111001100100000011101000110111101110111011001010110110000100000011010010111001100101110000011101100000100011110110000010001111011000001000111101100")
+
+(let* ((msg test5)
+       (plist (list :version 5 :error-correction-mode :Q))
+       (chunked-poly
+	(chunks-to-polynomials (group-message msg plist)))
+       (ec-words (correction-codewords chunked-poly plist)))
+  (format t "~a~%" chunked-poly)
+  (format t "~a~%" ec-words)
+    (structure-message chunked-poly
+		       ec-words
+		       plist))
+
+(defun binarize-integers (interleaved-data)
+  (format nil "~{~8,'0b~}" interleaved-data))
+
+(defun complete-with-remainder (binary-data version)
+  (concatenate 'string binary-data
+	       (padded-binary 0 (assocval version *remainders*))))
+
+(defun text-to-binary (text correction-level)
+  (multiple-value-bind (message property-list) (string-to-message text correction-level)
+    (let* ((chunked-poly
+	    (chunks-to-polynomials (group-message message property-list)))
+	   (ec-words (correction-codewords chunked-poly property-list))
+	   (structured-data (structure-message chunked-poly
+					       ec-words
+					       property-list)))
+      (complete-with-remainder (binarize-integers structured-data)
+			       (getf property-list :version)))))
+
