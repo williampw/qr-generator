@@ -64,15 +64,16 @@ error correction-mode and encoding mode."
   (padded-binary string-length
 		 (character-count-indicator-length version encoding-mode)))
 
-(defun chunk-string (string chunk-size)
-  "Split STRING into chunks of CHUNK-SIZE characters. The final block may be smaller than
-CHUNK-SIZE. Returns the list of substrings."
+(defun chunk (sequence chunk-size)
+  "Split SEQUENCE into chunks of CHUNK-SIZE characters. The final block may be smaller than
+CHUNK-SIZE. Returns the list of subsequences."
   (do ((start 0 (+ start chunk-size))
        (end chunk-size (+ end chunk-size))
-       (end-max (1- (length string)))
+       (end-max (1- (length sequence)))
        (result nil))
-      ((> end end-max) (append (nreverse result) (list (subseq string start))))
-    (push (subseq string start end) result)))
+      ((> end end-max) (append (nreverse result)
+			       (list (subseq sequence start))))
+    (push (subseq sequence start end) result)))
 
 (defgeneric encode-data (data encoding-mode)
   (:documentation "Represent DATA as a string of binary numbers."))
@@ -122,9 +123,8 @@ CHUNK-SIZE. Returns the list of substrings."
 (defun terminator (string-length capacity)
   "Terminator string that should be added at the end of an encoded string whose length is 
 STRING-LENGTH to try and reach CAPACITY."
-  (if (< string-length capacity)
-      (padded-binary 0 (min 4 (- capacity string-length)))
-      ""))
+  (when (< string-length capacity)
+      (padded-binary 0 (min 4 (- capacity string-length)))))
 
 (defun padding-to-multiple-of-eight (string-length)
   "Padding string that should be added at the end of a terminated string whose length is 
@@ -138,9 +138,7 @@ to make it reach CAPACITY."
   (let ((filling-bytes (alexandria:circular-list (padded-binary 236 8)
 						 (padded-binary 17 8)))
 	(bytes-to-fill (/ (- capacity string-length) 8)))
-    (apply #'concatenate 'string (loop repeat bytes-to-fill
-				   for i in filling-bytes
-				    collect i))))
+    (format nil "~{~a~}" (subseq filling-bytes 0 bytes-to-fill))))
 
 (defun product (&rest integers)
   (reduce #'logxor integers))
@@ -198,7 +196,7 @@ to make it reach CAPACITY."
 
 (defun split-message-string (message)
   (mapcar (lambda (x) (parse-integer x :radix 2))
-	  (chunk-string message 8)))
+	  (chunk message 8)))
 
 (defun message-polynomial (message)
   (nreverse (split-message-string message)))
@@ -249,19 +247,14 @@ to make it reach CAPACITY."
   (destructuring-bind (&key version error-correction-mode) property-list
     (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
 	(assocval error-correction-mode (assocval version *block-information*))
-      (flet ((cut-into-chunks (word-size start-value)
-	       (loop for g1 from 1 upto blocks-in-grp1
-		  for start = start-value then (+ start word-size)
-		  for end = (+ start-value word-size) then (+ end word-size)
-		  collect (subseq message start end))))
-	(let ((group1 (cut-into-chunks (* 8 words-in-block1) 0)))
-	  (if (zerop blocks-in-grp2)
-	      (list group1)
-	      (list group1
-		    (cut-into-chunks (* 8 words-in-block2)
-				     (* 8 blocks-in-grp1 words-in-block1)))))))))
+      (let ((group1 (chunk message (* 8 words-in-block1))))
+	(append (list group1)
+		(unless (zerop blocks-in-grp2)
+		  (list (chunk (subseq message (* 8 blocks-in-grp1 words-in-block1))
+			       (* 8 words-in-block2)))))))))
 
 (defun chunks-to-polynomials (chunks)
+  ;; (mapcar #'message-polynomial (alexandria:flatten chunks))
   (loop for group in chunks collect
        (loop for this-block in group
 	    collect (message-polynomial this-block))))
@@ -295,8 +288,8 @@ to make it reach CAPACITY."
 		(loop for poly in group collect
 		     (reverse poly)))))
    (if (small-qr-code-p property-list)
-       (alexandria:flatten (nconc (reverse-poly) correction-codewords))
-       (nconc (interleave-blocks (reverse-poly))
+       (alexandria:flatten (append (reverse-poly) correction-codewords))
+       (append (interleave-blocks (reverse-poly))
 	      (interleave-blocks correction-codewords)))))
 
 (defparameter text "HELLO WOLRD GLOUBIBOULGAAAA MARCHE A LOMBRE")
@@ -317,9 +310,10 @@ to make it reach CAPACITY."
        (ec-words (correction-codewords chunked-poly plist)))
   (format t "~a~%" chunked-poly)
   (format t "~a~%" ec-words)
-    (structure-message chunked-poly
-		       ec-words
-		       plist))
+  (structure-message chunked-poly
+		     ec-words
+		     plist))
+(print (string= "00100000010110110000101101111000110100010111001011011100010011010100001101000000111011000001000111101100" (string-to-message "HELLO WORLD" "Q")))
 
 (defun binarize-integers (interleaved-data)
   (format nil "~{~8,'0b~}" interleaved-data))
