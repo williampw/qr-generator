@@ -50,7 +50,8 @@
   ((content :initarg :content
 	    :accessor content
 	    :documentation "List of shapes that make up the pattern.")
-   (position :reader pos)))
+   (position :initform (make-instance 'point :x 0 :y 0)
+	     :reader pos)))
 
 (defclass finder-pattern (pattern)
   ((content :initform (list (make-instance 'square :side 7 :pos '(0 0) :color 'black)
@@ -67,8 +68,34 @@
 (defclass alignment-pattern (pattern)
   ((content :initform (list (make-instance 'square :side 5 :pos '(-2 -2) :color 'black)
 			    (make-instance 'square :side 3 :pos '(-1 -1) :color 'white)
-			    (make-instance 'square :side 1 :pos '(0 0) :color 'black)))
-   ))
+			    (make-instance 'square :side 1 :pos '(0 0) :color 'black)))))
+
+(defclass separator (pattern)
+  ((location :initarg :location)))
+
+(defclass timing-pattern (pattern)
+  ((generator :reader row-generator
+	      :initform (lambda (parent-size)
+			  (append
+			   (loop with x = 6 for y below parent-size
+			      for color in (alexandria:circular-list 'black 'white)
+			      collect (make-instance 'square :pos (list x y)
+						     :color color :side 1))
+			   (loop with y = 6 for x below parent-size			      
+			      for color in (alexandria:circular-list 'black 'white)
+			      collect (make-instance 'square :pos (list x y)
+						     :color color :side 1)))))))
+
+(defclass dot (pattern)
+  ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
+   (color :initarg :color)))
+
+(defmethod initialize-instance :after ((object dot) &key)
+  (with-slots (content color position) object
+    (setf (color (first content)) color)))
+
+(defclass dark-module (dot)
+  ((color :initform 'black)))
 
 (defclass qr-code ()
   ((version :initarg :version
@@ -77,13 +104,15 @@
 	    :reader content)
    (size :reader size)))
 
-
-
 (defmethod initialize-instance :after ((object qr-code) &key)
   (with-slots (size version content) object
     (setf size (qr-code-size version))
-      (setf content (add-finder-patterns version))
-      (setf content (append content (add-alignment-patterns content version)))))
+    (setf content (add-finder-patterns version))
+    (setf content (append content
+			  (add-alignment-patterns content version)
+			  (add-separators version)
+			  (add-timing-patterns content size)
+			  (add-dark-module version)))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -96,8 +125,8 @@
 
 (defmethod print-object ((object square) stream)
   (print-unreadable-object (object stream :type t)
-    (with-slots (side position) object
-      (format stream " of width ~d positionned from ~s" side position))))
+    (with-slots (side position color) object
+      (format stream " ~a of width ~d positionned from ~s" color side position))))
 
 (defmethod print-object ((object finder-pattern) stream)
   (print-unreadable-object (object stream :type t)
@@ -105,6 +134,12 @@
       (if (slot-boundp object 'position)
 	  (format stream "located in the ~a corner" location)
 	  (format stream "floating without a location")))))
+
+(defmethod print-object ((object dot) stream)
+  (print-unreadable-object (object stream :type t)
+    (with-slots (color position) object
+      (format stream "~a positionned from ~s" color position))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -149,11 +184,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Objects in the geometrical space
 
-(defgeneric move-to (object point)
-  (:documentation "Sets the position of OBJECT to POINT"))
+(defgeneric move-to (shape point)
+  (:documentation "Sets the position of SHAPE to POINT"))
 
-(defgeneric move-by (object point)
-  (:documentation "Shift OBJECT by an offset given by POINT"))
+(defgeneric move-by (shape point)
+  (:documentation "Shift SHAPE by an offset given by POINT"))
 
 (defgeneric extent (object))
 
@@ -161,38 +196,41 @@
   (:documentation "Compare the extents of OBJECT-1 and OBJECT-2 and return t if there is any
   overlap."))
 
-(defmethod move-to ((object square) (point point))
+(defmethod move-to ((shape point) (destination point))
+  (with-slots (x y) destination
+    (setf (x shape) x
+	  (y shape) y)))
+
+(defmethod move-to ((shape point) (destination list))
+  (destructuring-bind (x y) destination
+    (setf (x shape) x
+	  (y shape) y)))
+
+(defmethod move-to ((shape square) (destination point))
   "Moves SQUARE to POINT."
-  (with-slots (position) object
-    (setf position point)))
+  (with-slots (position) shape
+    (move-to position destination)
+    shape))
 
-(defmethod move-to ((object square) (point list))
+(defmethod move-to ((shape square) (destination list))
   "Moves SQUARE to the coordinates designated by POINT."
-  (destructuring-bind (x y) point
-    (with-slots (position) object
-      (setf position (make-instance 'point :x x :y y)))))
+  (with-slots (position) shape
+    (move-to position destination)))
 
-(defmethod move-by ((object square) (point point))
-  "If a POINT is supplied as offset to OBJECT, it is only a matter of setting the new position to
-the sum of POINT and the OBJECT's current position."
-  (with-slots (position) object
-    (move-to object (add position point))))
+(defmethod move-by ((shape point) (offset point))
+  (move-to shape (add shape offset)))
 
-(defmethod move-by ((object square) (point list))
-  "If a `list' is supplied as offset to OBJECT, turn it into a `point' and refer to the method
+(defmethod move-by ((shape square) (offset point))
+  "If a POINT is supplied as offset to SHAPE, it is only a matter of setting the new position to
+the sum of POINT and the SHAPE's current position."
+  (with-slots (position) shape
+    (move-to shape (add position offset))))
+
+(defmethod move-by ((shape square) (offset list))
+  "If a `list' is supplied as offset to SHAPE, turn it into a `point' and refer to the method
 specialized on `point'."
-  (destructuring-bind (x y) point
-    (move-by object (make-instance 'point :x x :y y))))
-
-(defmethod move-by ((object alignment-pattern) (point point))
-  (with-slots (content) object
-    (loop for shape in content do
-	 (move-by shape point))))
-
-(defmethod move-by ((object alignment-pattern) (point list))
-  (with-slots (content) object
-    (loop for shape in content do
-	 (move-by shape point))))
+  (with-slots (position) shape
+    (move-by position offset)))
 
 (defmethod extent ((shape point))
   (with-slots (x y) shape
@@ -225,28 +263,35 @@ specialized on `point'."
 	   (or (between-values ymin-1 ymin-2 ymax-2)
 	       (between-values ymin-2 ymin-1 ymax-1))))))
 
+(defmethod overlap-p ((object-1 pattern) (object-2 square))
+  (some (lambda (shape) (overlap-p shape object-2))
+	  (content object-1)))
+
 (defmethod overlap-p ((object-1 pattern) (object-2 pattern))
-  (destructuring-bind (xmin-1 xmax-1 ymin-1 ymax-1) (extent object-1)
-    (destructuring-bind (xmin-2 xmax-2 ymin-2 ymax-2) (extent object-2)
-      (and (or (between-values xmin-1 xmin-2 xmax-2)
-	       (between-values xmin-2 xmin-1 xmax-1))
-	   (or (between-values ymin-1 ymin-2 ymax-2)
-	       (between-values ymin-2 ymin-1 ymax-1))))))
+  (some (lambda (shape) (overlap-p object-2 shape))
+	  (content object-1)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Setting positions of patterns
 
-(defgeneric set-position (object point)
-  (:documentation "Set the `position' of OBJECT to POINT. Since this often requires knoledge about
+(defgeneric set-position (object point &key relative)
+  (:documentation "Set the `position' of OBJECT to POINT. Since this often requires knowledge about
   the containing object, it is not done manually but after the abstract `location' of OBJECT has
   been set."))
 
-(defmethod set-position ((object pattern) (point point))
-  (with-slots (content position) object
-    (setf position point)
-    (loop for shape in content do
-	 (move-by shape point))))
+(defmethod set-position ((object pattern) point &key (relative t))
+  (let ((moving-func (if relative #'move-by #'move-to)))
+   (with-slots (content position) object
+     (funcall moving-func position point)
+     (loop for shape in content do
+	  (funcall moving-func shape point))
+     object)))
+
+;; (defmethod set-position ((object pattern) (point list) &key (relative t))
+;;   (assert (= (length point) 2))
+;;   (destructuring-bind (x y) point
+;;     (set-position object (make-instance 'point :x x :y y) :relative relative)))
 
 (defgeneric set-location (location-designator object parent-version)
   (:documentation "Generic schmuck"))
@@ -264,6 +309,44 @@ specialized on `point'."
 (defmethod set-location :after ((location-designator symbol) (object finder-pattern)
 				parent-version)
   "After block"
+  (with-slots (location) object
+    (set-position object
+	  (ecase location
+	    (top-left (make-instance 'point :x 0 :y 0))
+	    (bottom-left (make-instance 'point :y 0
+					:x (+ (* 4 (1- parent-version)) 14)))
+	    (top-right (make-instance 'point
+				      :y (+ (* 4 (1- parent-version)) 14)
+				      :x 0))))))
+
+(defmethod set-location ((location-designator symbol) (object separator) parent-version)
+  (declare (ignore parent-version))
+  (format t "i'm here!")
+  (with-slots (content location) object
+    (ecase location-designator
+      ((top-left)
+       (setf location location-designator
+	     content
+	     (append (loop for x below 8 with y = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+      ((top-right)
+       (setf location location-designator
+	     content
+	     (append (loop for x below 8 with y = -1 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+      ((bottom-left)
+       (setf location location-designator
+	     content
+	     (append (loop for x from -1 below 7 with y = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = -1 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))))))
+
+(defmethod set-location :after ((location-designator symbol) (object separator) parent-version)
   (with-slots (location) object
     (set-position object
 	  (ecase location
@@ -293,6 +376,27 @@ specialized on `point'."
        do (set-position ali possible-pos)
        unless (overlaps-with-finders ali)
        collect ali)))
+
+(defun add-separators (version)
+  (loop for location in '(top-left top-right bottom-left)
+     for sp = (make-instance 'separator)
+     do (set-location location sp version)
+     collect sp))
+
+(defun add-timing-patterns (content size)
+  (flet ((overlaps-with-finders (shape)
+	   (loop for pattern in (subseq content 0 3)
+		thereis (overlap-p pattern shape))))
+   (let ((timing-pattern (make-instance 'timing-pattern)))
+     (with-slots (generator) timing-pattern
+       (setf (content timing-pattern)
+	     (remove-if #'overlaps-with-finders (funcall generator size))))
+     (list timing-pattern))))
+
+(defun add-dark-module (version)
+  (let ((dark-module (make-instance 'dark-module)))
+    (set-position dark-module (make-instance 'point :x (+ (* 4 version) 9) :y 8))
+    (list dark-module)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -357,3 +461,18 @@ specialized on `point'."
                              :height png-size
 			     :image-data px)))    
     (zpng:write-png png file)))
+
+(defun step-side (dot &key direction)
+  (declare (ignorable direction))
+  (let ((offset (make-instance 'point :x 0 :y -1)))
+    (set-position dot offset)))
+
+(defun step-forward (dot &key direction)
+  (let ((offset (make-instance 'point :x (ecase  direction ((:up) -1) (:down 1)) :y 0)))
+    (set-position dot offset)))
+
+(defun progress (dot steps &key direction)
+  (dotimes (i steps dot)
+    (if (evenp i)
+	(step-side dot :direction direction)
+	(step-forward dot :direction direction))))
