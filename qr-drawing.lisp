@@ -5,10 +5,7 @@
 
 (defun alignment-pattern-positions (version)
   (let ((grid (aref *alignment-pattern-centers* (1- version))))
-    (alexandria:map-product (lambda (x y) (make-instance 'point :x x :y y)) grid grid)))
-
-(defun between-values (x min max &key (test-min #'<=) (test-max #'<))
-  (and (funcall test-min min x) (funcall test-max x max)))
+    (alexandria:map-product #'list  grid grid)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Classes to represent geometrical objects
@@ -17,8 +14,7 @@
   ((x :initarg :x
       :initform (error "Must provide the x coordinate.")
       :accessor x
-      :documentation "The x coordinate of the point.")
-   
+      :documentation "The x coordinate of the point.")   
    (y :initarg :y
       :initform (error "Must provide the y coordinate.")
       :accessor y
@@ -27,13 +23,11 @@
 (defclass square ()
   ((side :initarg :side
 	 :initform (error "Must provide the side of the square")
-	 :accessor side)
-   
+	 :accessor side)   
    (position :initarg :pos
 	     :initform (error "Must provide either a point or a 2-element list.")
 	     :accessor pos
-	     :documentation "Position can be supplied either as a POINT or a list of 2 coordinates")
-   
+	     :documentation "Top left corner of the square.")
    (color :initarg :color
 	  :initform 'white
 	  :accessor color
@@ -51,24 +45,44 @@
 	    :accessor content
 	    :documentation "List of shapes that make up the pattern.")
    (position :initform (make-instance 'point :x 0 :y 0)
-	     :reader pos)))
-
-(defclass finder-pattern (pattern)
-  ((content :initform (list (make-instance 'square :side 7 :pos '(0 0) :color 'black)
-			    (make-instance 'square :side 5 :pos '(1 1) :color 'white)
-			    (make-instance 'square :side 3 :pos '(2 2) :color 'black)))
-   (position :documentation "Real coordinates in the geometrical space. Since it depends on
+	     :reader pos
+	     :documentation "Real coordinates in the geometrical space. Since it depends on
   the containing object's size, it should not be set manually. Instead, set the abstract `location'
-  and let it set the position for you.")   
-   (location :reader loc
-	     :documentation "Location on the QR code. Should be set by providing either of
-  ('top-left 'top-right 'bottom-left) to `set-location', which will take care of updating
-  `position' to the appropriate coordinates.")))
+  and let it set the position for you.")))
 
-(defclass alignment-pattern (pattern)
-  ((content :initform (list (make-instance 'square :side 5 :pos '(-2 -2) :color 'black)
-			    (make-instance 'square :side 3 :pos '(-1 -1) :color 'white)
-			    (make-instance 'square :side 1 :pos '(0 0) :color 'black)))))
+(defmacro define-concentric-pattern (name specs &body body)
+  (declare (ignorable body))
+  (let ((content)
+	(parent-pos 0)
+	(parent-side 0))
+    (labels ((position-offset (side)
+	     (+ parent-pos (/ (- parent-side side) 2)))
+	   (spec->square (spec)
+	     (destructuring-bind (&key pos side color) spec
+	       (let ((new-pos (if (eql pos :deduce) (position-offset side) pos)))
+		 (setf parent-side side
+		       parent-pos new-pos)
+		 `(make-instance 'square :side ,side :pos ',(list new-pos new-pos)
+				 :color ',color)))))
+      `(defclass ,name (pattern)
+	 ((content :initform
+		   (list ,@(dolist (spec specs (nreverse content))
+			     (push (spec->square spec) content))))
+	  ,@body)))))
+
+(define-concentric-pattern finder-pattern
+    ((:side 7 :color black :pos 0)
+     (:side 5 :color white :pos :deduce)
+     (:side 3 :color black :pos :deduce))
+  (location :reader loc
+	    :documentation "Location on the QR code. Should be set by providing either of
+  ('top-left 'top-right 'bottom-left) to `set-location', which will take care of updating
+  `position' to the appropriate coordinates."))
+
+(define-concentric-pattern alignment-pattern
+    ((:side 5 :color black :pos -2)
+     (:side 3 :color white :pos :deduce)
+     (:side 1 :color black :pos :deduce)))
 
 (defclass separator (pattern)
   ((location :initarg :location)))
@@ -143,19 +157,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Arithemtic operations
-
-(defgeneric equality (object-a object-b)
-  (:documentation "Tests whether OBJECT-A and OBJECT-B have the same contents."))
-
-(defmethod equality ((point-a point) (point-b point))
-  (and (= (x point-a) (x point-b))
-       (= (y point-a) (y point-b))))
-
-(defmethod equality ((sqa square) (sqb square))
-  (and (equality (pos sqa) (pos sqb))
-       (eql (color sqa) (color sqb))
-       (= (side sqa) (side sqb))))
+;;; Arithemtic operations on points
 
 (defgeneric add (point-a point-b)
   (:documentation "Vectorial sum of points."))
@@ -165,13 +167,11 @@
 		 :x (+ (x point-a) (x point-b))
 		 :y (+ (y point-a) (y point-b))))
 
-(defgeneric subtract (point-a point-b)
-  (:documentation "Vectorial difference of points."))
-
-(defmethod subtract ((point-a point) (point-b point))
-  (add point-a (make-instance 'point
-			      :x (- (x point-b))
-			      :y (- (y point-b)))))
+(defmethod add ((point-a point) (point-b list))
+  (destructuring-bind (x-b y-b) point-b
+   (make-instance 'point
+		  :x (+ (x point-a) x-b)
+		  :y (+ (y point-a) y-b))))
 
 (defgeneric multi (object scalar))
 
@@ -182,15 +182,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Objects in the geometrical space
+;;; Moving and comparing shapes
 
 (defgeneric move-to (shape point)
   (:documentation "Sets the position of SHAPE to POINT"))
 
 (defgeneric move-by (shape point)
   (:documentation "Shift SHAPE by an offset given by POINT"))
-
-(defgeneric extent (object))
 
 (defgeneric overlap-p (object-1 object-2)
   (:documentation "Compare the extents of OBJECT-1 and OBJECT-2 and return t if there is any
@@ -220,6 +218,9 @@
 (defmethod move-by ((shape point) (offset point))
   (move-to shape (add shape offset)))
 
+(defmethod move-by ((shape point) (offset list))
+  (move-to shape (add shape offset)))
+
 (defmethod move-by ((shape square) (offset point))
   "If a POINT is supplied as offset to SHAPE, it is only a matter of setting the new position to
 the sum of POINT and the SHAPE's current position."
@@ -232,32 +233,17 @@ specialized on `point'."
   (with-slots (position) shape
     (move-by position offset)))
 
-(defmethod extent ((shape point))
-  (with-slots (x y) shape
-    (list x x y y)))
-
-(defmethod extent ((shape square))
-  (with-slots (side position) shape
+(defun extent (square)
+  (with-slots (side position) square
     (with-slots (x y) position
       (list x (+ x side) y (+ y side)))))
 
-(defmethod extent ((shape pattern))
-  (with-slots (content) shape
-    (loop for sub-shape in content
-       for (xmin xmax ymin ymax) = (extent sub-shape)
-       minimizing xmin into x-low
-       maximizing xmax into x-high
-       minimizing ymin into y-low
-       maximizing ymax into y-high
-       finally (return (list x-low x-high y-low y-high)))))
+(defun between-values (x min max &key (test-min #'<=) (test-max #'<))
+  (and (funcall test-min min x) (funcall test-max x max)))
 
-(defmethod overlap-p ((object-1 point) (object-2 point))
-  "The only way two points can overlap is if they are the same point."
-  (equality object-1 object-2))
-
-(defmethod overlap-p ((object-1 square) (object-2 square))
-  (destructuring-bind (xmin-1 xmax-1 ymin-1 ymax-1) (extent object-1)
-    (destructuring-bind (xmin-2 xmax-2 ymin-2 ymax-2) (extent object-2)
+(defmethod overlap-p ((shape-1 square) (shape-2 square))
+  (destructuring-bind (xmin-1 xmax-1 ymin-1 ymax-1) (extent shape-1)
+    (destructuring-bind (xmin-2 xmax-2 ymin-2 ymax-2) (extent shape-2)
       (and (or (between-values xmin-1 xmin-2 xmax-2)
 	       (between-values xmin-2 xmin-1 xmax-1))
 	   (or (between-values ymin-1 ymin-2 ymax-2)
@@ -265,15 +251,15 @@ specialized on `point'."
 
 (defmethod overlap-p ((object-1 pattern) (object-2 square))
   (some (lambda (shape) (overlap-p shape object-2))
-	  (content object-1)))
+	(content object-1)))
 
 (defmethod overlap-p ((object-1 pattern) (object-2 pattern))
   (some (lambda (shape) (overlap-p object-2 shape))
-	  (content object-1)))
+	(content object-1)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Setting positions of patterns
+;;; Moving patterns
 
 (defgeneric set-position (object point &key relative)
   (:documentation "Set the `position' of OBJECT to POINT. Since this often requires knowledge about
@@ -287,11 +273,6 @@ specialized on `point'."
      (loop for shape in content do
 	  (funcall moving-func shape point))
      object)))
-
-;; (defmethod set-position ((object pattern) (point list) &key (relative t))
-;;   (assert (= (length point) 2))
-;;   (destructuring-bind (x y) point
-;;     (set-position object (make-instance 'point :x x :y y) :relative relative)))
 
 (defgeneric set-location (location-designator object parent-version)
   (:documentation "Generic schmuck"))
@@ -321,7 +302,6 @@ specialized on `point'."
 
 (defmethod set-location ((location-designator symbol) (object separator) parent-version)
   (declare (ignore parent-version))
-  (format t "i'm here!")
   (with-slots (content location) object
     (ecase location-designator
       ((top-left)
@@ -411,15 +391,23 @@ specialized on `point'."
 	  (pixel-pos (multi position module-size)))
       (loop for i from (x pixel-pos) below (+ pixel-side (x pixel-pos)) do
 	   (loop for j from (y pixel-pos) below (+ pixel-side (y pixel-pos)) do
-		(setf (aref canvas i j) (color-value color))))
-      canvas)))
+		(setf (aref canvas i j) (color-value color)))))))
 
 (defmethod pixelize ((object pattern) module-size &key canvas)
   (with-slots (content) object
-    (loop for shape in content
-       for cv = (pixelize shape module-size :canvas canvas)
-       then (pixelize shape module-size :canvas cv))
-    canvas))
+    (dolist (shape content)
+      (pixelize shape module-size :canvas canvas))))
+
+(defmethod pixelize ((object qr-code) module-size &key canvas)
+  (with-slots (size content) object
+    (let* ((pixel-side (* module-size size))
+	   (canvas (or canvas
+		       (make-array (list pixel-side pixel-side)
+				   :initial-element (color-value t)
+				   :element-type '(unsigned-byte 8)))))
+      (dolist (pattern content)
+	(pixelize pattern module-size :canvas canvas))
+      canvas)))
 
 (defun color-value (color)
   (ecase color
@@ -427,27 +415,14 @@ specialized on `point'."
     (black 0)
     (t 127)))
 
-
-(defmethod pixelize ((object qr-code) module-size &key canvas)
-  (with-slots (size content) object
-    (let* ((pixel-side (* module-size size))
-	   (canvas (or canvas (make-array (list pixel-side pixel-side)
-					  :initial-element (color-value t)
-					  :element-type '(unsigned-byte 8)))))
-      (loop for shape in content
-	 for cv = (pixelize shape module-size :canvas canvas)
-	 then (pixelize shape module-size :canvas cv))
-    canvas)))
-
-
 (defun print-to-file (qr-code module-size file)
   (with-open-file (out file :direction :output :if-exists :supersede)
     (let* ((px (pixelize qr-code module-size))
 	   (rows-cols (array-dimensions px)))
       (loop for row below (first rows-cols)
-		do (loop for col below (second rows-cols) do
-			(format out "~d" (aref px row col)))
-		  (format out "~%")))))
+	 do (loop for col below (second rows-cols) do
+		 (format out "~d" (aref px row col)))
+	   (format out "~%")))))
 
 (defun print-to-png (qr-code module-size file)
   (let* ((png-size (* (size qr-code) module-size))
