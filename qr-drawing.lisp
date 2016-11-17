@@ -116,11 +116,17 @@
 	    :initform (error "Must supply the version of the QR code."))
    (content :initarg :content
 	    :reader content)
-   (size :reader size)))
+   (size :reader size)
+   (step-move :accessor step-move
+		:initform :side)
+   (progress-direction :accessor progress-direction
+		       :initform :up)
+   (filling-point :accessor filling-point)))
 
 (defmethod initialize-instance :after ((object qr-code) &key)
-  (with-slots (size version content) object
+  (with-slots (size version filling-point content) object
     (setf size (qr-code-size version))
+    (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
     (setf content (add-finder-patterns version))
     (setf content (append content
 			  (add-alignment-patterns content version)
@@ -197,12 +203,14 @@
 (defmethod move-to ((shape point) (destination point))
   (with-slots (x y) destination
     (setf (x shape) x
-	  (y shape) y)))
+	  (y shape) y)
+    shape))
 
 (defmethod move-to ((shape point) (destination list))
   (destructuring-bind (x y) destination
     (setf (x shape) x
-	  (y shape) y)))
+	  (y shape) y)
+    shape))
 
 (defmethod move-to ((shape square) (destination point))
   "Moves SQUARE to POINT."
@@ -437,17 +445,49 @@ specialized on `point'."
 			     :image-data px)))    
     (zpng:write-png png file)))
 
-(defun step-side (dot &key direction)
+(defun make-step (qr-code point move direction)
   (declare (ignorable direction))
-  (let ((offset (make-instance 'point :x 0 :y -1)))
-    (set-position dot offset)))
+  (let ((offset (ecase move
+		  ((:side) '(0 -1))
+		  ((:forward)
+		   (ecase direction
+		     ((:up) '(-1 1))
+		     ((:down) '(1 1)))))))
+    (check-inside qr-code (add point offset))))
 
-(defun step-forward (dot &key direction)
-  (let ((offset (make-instance 'point :x (ecase  direction ((:up) -1) (:down 1)) :y 0)))
-    (set-position dot offset)))
+(defun flip-direction (direction)
+  (if (eql direction :up) :down :up))
 
-(defun progress (dot steps &key direction)
-  (dotimes (i steps dot)
-    (if (evenp i)
-	(step-side dot :direction direction)
-	(step-forward dot :direction direction))))
+(defun next-step-move (step-move)
+  (if (eql step-move :forward) :side :forward))
+
+(defun progress (qr-code)
+  (with-slots (filling-point step-move progress-direction) qr-code
+    (handler-case
+	(prog1
+	    (setf filling-point
+		  (make-step qr-code filling-point step-move progress-direction))
+	  (setf step-move (next-step-move step-move)))
+      (out-of-bounds-error ()
+	(setf step-move (next-step-move step-move))
+	(setf progress-direction (flip-direction progress-direction))
+	(setf filling-point
+	      (make-step qr-code filling-point step-move progress-direction))))))
+
+(defgeneric check-inside (qr-code point)
+  (:documentation "Is POINT inside the QR-CODE?"))
+
+(defmethod check-inside ((qr-code qr-code) (point point))
+  (if (or (minusp (x point)) (>= (x point) (size qr-code)))
+      (error 'out-of-bounds-error)      
+      point))
+
+(defmethod check-inside ((qr-code qr-code) (point list))
+  (destructuring-bind (x y) point
+    (declare (ignorable y))
+    (if (or (minusp x) (>= x (size qr-code)))
+	(error 'out-of-bounds-error)      
+	point)))
+
+(define-condition out-of-bounds-error (error)
+  ((text :initform "Below the lower limit or above the upper limit of the QR code")))
