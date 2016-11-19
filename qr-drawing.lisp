@@ -56,14 +56,14 @@
 	(parent-pos 0)
 	(parent-side 0))
     (labels ((position-offset (side)
-	     (+ parent-pos (/ (- parent-side side) 2)))
-	   (spec->square (spec)
-	     (destructuring-bind (&key pos side color) spec
-	       (let ((new-pos (if (eql pos :deduce) (position-offset side) pos)))
-		 (setf parent-side side
-		       parent-pos new-pos)
-		 `(make-instance 'square :side ,side :pos ',(list new-pos new-pos)
-				 :color ',color)))))
+	       (+ parent-pos (/ (- parent-side side) 2)))
+	     (spec->square (spec)
+	       (destructuring-bind (&key pos side color) spec
+		 (let ((new-pos (if (eql pos :deduce) (position-offset side) pos)))
+		   (setf parent-side side
+			 parent-pos new-pos)
+		   `(make-instance 'square :side ,side :pos ',(list new-pos new-pos)
+				   :color ',color)))))
       `(defclass ,name (pattern)
 	 ((content :initform
 		   (list ,@(dolist (spec specs (nreverse content))
@@ -87,18 +87,27 @@
 (defclass separator (pattern)
   ((location :initarg :location)))
 
-(defclass timing-pattern (pattern)
-  ((generator :reader row-generator
+(defclass horizontal-timing-pattern (pattern)
+  ((generator :reader generator
 	      :initform (lambda (parent-size)
-			  (append
-			   (loop with x = 6 for y below parent-size
+			  (loop with x = 6 for y below parent-size
+			     for color in (alexandria:circular-list 'black 'white)
+			     collect (make-instance 'square :pos (list x y)
+						    :color color :side 1))))))
+
+(defclass vertical-timing-pattern (pattern)
+  ((generator :reader generator
+	      :initform (lambda (parent-size)
+			  (loop with y = 6 for x below parent-size			      
 			      for color in (alexandria:circular-list 'black 'white)
 			      collect (make-instance 'square :pos (list x y)
-						     :color color :side 1))
-			   (loop with y = 6 for x below parent-size			      
-			      for color in (alexandria:circular-list 'black 'white)
-			      collect (make-instance 'square :pos (list x y)
-						     :color color :side 1)))))))
+						     :color color :side 1))))))
+
+(defclass version-pattern (pattern)
+  ((location :initarg :location)))
+
+(defclass format-pattern (pattern)
+  ((location :initarg location)))
 
 (defclass dot (pattern)
   ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
@@ -114,8 +123,10 @@
 (defclass qr-code ()
   ((version :initarg :version
 	    :initform (error "Must supply the version of the QR code."))
-   (content :initarg :content
-	    :reader content)
+   (patterns :initarg :patterns
+	     :reader patterns)
+   (modules :accessor modules
+	    :initform nil)
    (size :reader size)
    (step-move :accessor step-move
 		:initform :side)
@@ -124,15 +135,17 @@
    (filling-point :accessor filling-point)))
 
 (defmethod initialize-instance :after ((object qr-code) &key)
-  (with-slots (size version filling-point content) object
+  (with-slots (size version filling-point patterns) object
     (setf size (qr-code-size version))
     (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
-    (setf content (add-finder-patterns version))
-    (setf content (append content
-			  (add-alignment-patterns content version)
-			  (add-separators version)
-			  (add-timing-patterns content size)
-			  (add-dark-module version)))))
+    (setf patterns (add-finder-patterns version))
+    (setf patterns (append patterns
+			   (add-alignment-patterns patterns version)
+			   (add-separators version)
+			   (add-timing-patterns patterns size)
+			   (add-dark-module version)
+			   (add-format-patterns version)
+			   (add-version-patterns version)))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -249,6 +262,11 @@ specialized on `point'."
 (defun between-values (x min max &key (test-min #'<=) (test-max #'<))
   (and (funcall test-min min x) (funcall test-max x max)))
 
+(defmethod overlap-p ((shape square) (point point))
+  (destructuring-bind (xmin xmax ymin ymax) (extent shape)
+    (and (between-values (x point) xmin xmax)
+	 (between-values (y point) ymin ymax))))
+
 (defmethod overlap-p ((shape-1 square) (shape-2 square))
   (destructuring-bind (xmin-1 xmax-1 ymin-1 ymax-1) (extent shape-1)
     (destructuring-bind (xmin-2 xmax-2 ymin-2 ymax-2) (extent shape-2)
@@ -256,6 +274,10 @@ specialized on `point'."
 	       (between-values xmin-2 xmin-1 xmax-1))
 	   (or (between-values ymin-1 ymin-2 ymax-2)
 	       (between-values ymin-2 ymin-1 ymax-1))))))
+
+(defmethod overlap-p ((object pattern) (point point))
+  (some (lambda (shape) (overlap-p shape point))
+	(content object)))
 
 (defmethod overlap-p ((object-1 pattern) (object-2 square))
   (some (lambda (shape) (overlap-p shape object-2))
@@ -308,42 +330,153 @@ specialized on `point'."
 				      :y (+ (* 4 (1- parent-version)) 14)
 				      :x 0))))))
 
-(defmethod set-location ((location-designator symbol) (object separator) parent-version)
+(location-setter separator
+  (top-left (0 0)
+	    (append (loop for x below 8 with y = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))
+  (top-right (0 (+ (* 4 (1- parent-version)) 14))
+	     (append (loop for x below 8 with y = -1 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))
+  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)
+	       (append (loop for x from -1 below 7 with y = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = -1 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+
+;; (defmethod set-location ((location-designator symbol) (object separator) parent-version)
+;;   (declare (ignore parent-version))
+;;   (with-slots (content location) object
+;;     (ecase location-designator
+;;       ((top-left)
+;;        (setf location location-designator
+;; 	     content
+;; 	     (append (loop for x below 8 with y = 7 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+;; 		     (loop for y below 7 with x = 7 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+;;       ((top-right)
+;;        (setf location location-designator
+;; 	     content
+;; 	     (append (loop for x below 8 with y = -1 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+;; 		     (loop for y below 7 with x = 7 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+;;       ((bottom-left)
+;;        (setf location location-designator
+;; 	     content
+;; 	     (append (loop for x from -1 below 7 with y = 7 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+;; 		     (loop for y below 7 with x = -1 collect
+;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))))))
+
+;; (defmethod set-location :after ((location-designator symbol) (object separator) parent-version)
+;;   (with-slots (location) object
+;;     (set-position object
+;; 	  (ecase location
+;; 	    (top-left (make-instance 'point :x 0 :y 0))
+;; 	    (bottom-left (make-instance 'point :y 0
+;; 					:x (+ (* 4 (1- parent-version)) 14)))
+;; 	    (top-right (make-instance 'point
+;; 				      :y (+ (* 4 (1- parent-version)) 14)
+;; 				      :x 0))))))
+
+(defmethod set-location ((location-designator symbol) (object format-pattern) parent-version)
   (declare (ignore parent-version))
   (with-slots (content location) object
     (ecase location-designator
       ((top-left)
        (setf location location-designator
-	     content
-	     (append (loop for x below 8 with y = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+	     content (append
+		       (loop for x below 9 with y = 8 unless (= x 6)
+			  collect (make-instance 'square :side 1 :pos (list x y)))
+		       (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
+			  collect (make-instance 'square :side 1 :pos (list x y))))))
       ((top-right)
        (setf location location-designator
-	     content
-	     (append (loop for x below 8 with y = -1 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+	     content (loop with x = 0 for y downfrom 7 to 0
+			 collect (make-instance 'square :side 1 :pos (list x y)))))
       ((bottom-left)
        (setf location location-designator
-	     content
-	     (append (loop for x from -1 below 7 with y = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = -1 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))))))
+	     content (loop for x downfrom 6 to 0 with y = 0
+			collect (make-instance 'square :side 1 :pos (list x y))))))))
 
-(defmethod set-location :after ((location-designator symbol) (object separator) parent-version)
+(defmethod set-location :after ((location-designator symbol) (object format-pattern) parent-version)
   (with-slots (location) object
     (set-position object
 	  (ecase location
 	    (top-left (make-instance 'point :x 0 :y 0))
-	    (bottom-left (make-instance 'point :y 0
+	    (bottom-left (make-instance 'point :y 8
 					:x (+ (* 4 (1- parent-version)) 14)))
 	    (top-right (make-instance 'point
-				      :y (+ (* 4 (1- parent-version)) 14)
-				      :x 0))))))
+				      :y (+ (* 4 (1- parent-version)) 13)
+				      :x 8))))))
+
+;; (defmethod set-location ((location-designator symbol) (object version-pattern) parent-version)
+;;   (declare (ignore parent-version))
+;;   (with-slots (content location) object
+;;     (ecase location-designator
+;;       ((top-right)
+;;        (setf location location-designator
+;; 	     content (loop for x below 6 append
+;; 			  (loop for y below 3
+;; 			     collect (make-instance 'square :side 1 :pos (list x y))))))
+						     
+;;       ((bottom-left)
+;;        (setf location location-designator
+;; 	     content (loop for y below 6 append
+;; 			  (loop for x below 3
+;; 			     collect (make-instance 'square :side 1 :pos (list x y)))))))))
+
+(location-setter version-pattern
+  (bottom-left ((+ (* 4 (1- parent-version)) 10) 0)
+	       (loop for y below 6 append
+			  (loop for x below 3
+			     collect (make-instance 'square :side 1 :pos (list x y)))))
+  (top-right (0 (+ (* 4 (1- parent-version)) 10))
+	     (loop for x below 6 append
+			  (loop for y below 3
+			     collect (make-instance 'square :side 1 :pos (list x y))))))
+
+;; (defmethod set-location :after ((location-designator symbol) (object version-pattern) parent-version)
+;;   (with-slots (location) object
+;;     (set-position object
+;; 		  (ecase location
+;; 		    (bottom-left (make-instance 'point :y 0
+;; 						:x (+ (* 4 (1- parent-version)) 10)))
+;; 		    (top-right (make-instance 'point
+;; 					      :y (+ (* 4 (1- parent-version)) 10)
+;; 					      :x 0))))))
+
+
+
+(defmacro location-setter (class &body location-forms)
+  (flet ((location-form->point (location-form)
+	   (destructuring-bind (location (x-loc y-loc) &rest content-form) location-form
+	     (declare (ignore content-form))
+	     `((,location) (make-instance 'point :x ,x-loc :y ,y-loc)))))
+    `(progn
+       (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
+	 (declare (ignore parent-version))
+	 (with-slots (content location) object
+	   (ecase location-designator
+	     ,@(loop for location-form in location-forms collect
+		    `((,(first location-form))
+		      (setf location location-designator
+			    content ,(alexandria:last-elt location-form)))))))
+       (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
+		  (with-slots (location) object
+		    (set-position object
+				  (ecase location
+				    ,@(loop for location-form in location-forms collect
+					   (location-form->point location-form)))))))))
+
+;; (location-setter finder-pattern
+;;   (top-left (0 0))
+;;   (top-right (0 (+ (* 4 (1- parent-version)) 13))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -371,20 +504,37 @@ specialized on `point'."
      do (set-location location sp version)
      collect sp))
 
-(defun add-timing-patterns (content size)
+(defun add-format-patterns (version)
+  (loop for location in '(top-left top-right bottom-left)
+     for fp = (make-instance 'format-pattern)
+     do (set-location location fp version)
+     collect fp))
+
+(defun add-timing-patterns (patterns size)
   (flet ((overlaps-with-finders (shape)
-	   (loop for pattern in (subseq content 0 3)
-		thereis (overlap-p pattern shape))))
-   (let ((timing-pattern (make-instance 'timing-pattern)))
-     (with-slots (generator) timing-pattern
-       (setf (content timing-pattern)
-	     (remove-if #'overlaps-with-finders (funcall generator size))))
-     (list timing-pattern))))
+	   (loop for pattern in (subseq patterns 0 3)
+	      thereis (overlap-p pattern shape))))
+    (let ((horizontal-timing-pattern (make-instance 'horizontal-timing-pattern))
+	  (vertical-timing-pattern (make-instance 'vertical-timing-pattern)))
+      (with-slots (generator) horizontal-timing-pattern
+	(setf (content horizontal-timing-pattern)
+	      (remove-if #'overlaps-with-finders (funcall generator size))))
+      (with-slots (generator) vertical-timing-pattern
+	(setf (content vertical-timing-pattern)
+	      (remove-if #'overlaps-with-finders (funcall generator size))))
+      (list horizontal-timing-pattern vertical-timing-pattern))))
 
 (defun add-dark-module (version)
   (let ((dark-module (make-instance 'dark-module)))
     (set-position dark-module (make-instance 'point :x (+ (* 4 version) 9) :y 8))
     (list dark-module)))
+
+(defun add-version-patterns (version)
+  (when (>= version 7)
+    (loop for location in '(bottom-left top-right)
+       for vp = (make-instance 'version-pattern)
+       do (set-location location vp version)
+       collect vp)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -407,20 +557,22 @@ specialized on `point'."
       (pixelize shape module-size :canvas canvas))))
 
 (defmethod pixelize ((object qr-code) module-size &key canvas)
-  (with-slots (size content) object
+  (with-slots (size patterns modules) object
     (let* ((pixel-side (* module-size size))
 	   (canvas (or canvas
 		       (make-array (list pixel-side pixel-side)
 				   :initial-element (color-value t)
 				   :element-type '(unsigned-byte 8)))))
-      (dolist (pattern content)
+      (dolist (pattern patterns)
 	(pixelize pattern module-size :canvas canvas))
+      (dolist (module modules)
+	(pixelize module module-size :canvas canvas))
       canvas)))
 
 (defun color-value (color)
   (ecase color
-    (white 255)
-    (black 0)
+    ((white) 255)
+    ((black) 0)
     (t 127)))
 
 (defun print-to-file (qr-code module-size file)
@@ -445,7 +597,7 @@ specialized on `point'."
 			     :image-data px)))    
     (zpng:write-png png file)))
 
-(defun make-step (qr-code point move direction)
+(defun make-step (point move direction)
   (declare (ignorable direction))
   (let ((offset (ecase move
 		  ((:side) '(0 -1))
@@ -453,7 +605,16 @@ specialized on `point'."
 		   (ecase direction
 		     ((:up) '(-1 1))
 		     ((:down) '(1 1)))))))
-    (check-inside qr-code (add point offset))))
+    (add point offset)))
+
+(defun ensure-step (qr-code point move direction)
+  (let ((new-point (make-step point move direction)))
+    (restart-case (check-inside qr-code new-point)
+      (step-again (new-move new-direction) (ensure-step qr-code new-point new-move new-direction))
+      (double-side-step () (make-step point :side direction)))))
+
+(defun check-pattern-overlap (qr-code point)
+  (find t (patterns qr-code) :key (lambda (pattern) (overlap-p pattern point))))
 
 (defun flip-direction (direction)
   (if (eql direction :up) :down :up))
@@ -463,24 +624,33 @@ specialized on `point'."
 
 (defun progress (qr-code)
   (with-slots (filling-point step-move progress-direction) qr-code
-    (handler-case
-	(prog1
+    (handler-bind
+	((out-of-bounds-error
+	  (lambda (c)
+	    (declare (ignore c))
+	    (setf progress-direction (flip-direction progress-direction))
 	    (setf filling-point
-		  (make-step qr-code filling-point step-move progress-direction))
-	  (setf step-move (next-step-move step-move)))
-      (out-of-bounds-error ()
+		  (invoke-restart 'double-side-step)))))
+      (let* ((next-point (ensure-step qr-code filling-point step-move progress-direction))
+	     (overlapping-pattern (check-pattern-overlap qr-code next-point)))
+	(setf filling-point next-point)
 	(setf step-move (next-step-move step-move))
-	(setf progress-direction (flip-direction progress-direction))
-	(setf filling-point
-	      (make-step qr-code filling-point step-move progress-direction))))))
+	(cond
+	  ((and overlapping-pattern (eql (type-of overlapping-pattern) 'vertical-timing-pattern))
+	   (prog1 (progress qr-code) (format t "i stepped VTP~%") (setf step-move :side)))
+	  (overlapping-pattern (progress qr-code))
+	  (t filling-point))))))
 
 (defgeneric check-inside (qr-code point)
-  (:documentation "Is POINT inside the QR-CODE?"))
+  (:documentation "Is POINT inside the QR-CODE? If so, return POINT."))
 
 (defmethod check-inside ((qr-code qr-code) (point point))
-  (if (or (minusp (x point)) (>= (x point) (size qr-code)))
-      (error 'out-of-bounds-error)      
-      point))
+  (cond
+    ((or (minusp (x point))
+	 (>= (x point) (size qr-code)))
+     (error 'out-of-bounds-error))
+    ((minusp (y point)) (error "Beyond QR code capacity!"))
+    (t point)))
 
 (defmethod check-inside ((qr-code qr-code) (point list))
   (destructuring-bind (x y) point
@@ -491,3 +661,9 @@ specialized on `point'."
 
 (define-condition out-of-bounds-error (error)
   ((text :initform "Below the lower limit or above the upper limit of the QR code")))
+
+(defun write-module (qr-code bit)
+  (let ((data-module (make-instance 'dot :color (if (zerop bit) 'black 'white))))
+    (set-position data-module (filling-point qr-code) :relative nil)
+    (push data-module (modules qr-code)))
+  (progress qr-code))
