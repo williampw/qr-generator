@@ -307,28 +307,38 @@ specialized on `point'."
 (defgeneric set-location (location-designator object parent-version)
   (:documentation "Generic schmuck"))
 
-(defmethod set-location ((location-designator symbol) (object finder-pattern)
-			 parent-version)
-  "Mian block"
-  (declare (ignore parent-version))
-  (with-slots (location) object
-    (ecase location-designator
-      ((top-left) (setf location location-designator))
-      ((bottom-left) (setf location location-designator))
-      ((top-right) (setf location location-designator)))))
+(defmacro location-setter (class &body location-forms)
+  (flet ((form->point (location-form)
+	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
+	     (declare (ignore content-form))
+	     `((,location) (make-instance 'point :x ,x-loc :y ,y-loc))))
+	 (form->position (location-form)
+	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
+	     (declare (ignore x-loc y-loc))
+	     (if content-form
+		 `((,location) (setf location location-designator
+				     content ,content-form))
+		 `((,location) (setf location location-designator))))))
+    `(progn
+       
+       (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
+	 (declare (ignore parent-version))
+	 (with-slots (content location) object
+	   (ecase location-designator
+	     ,@(loop for location-form in location-forms collect
+		    (form->position location-form)))))
+       
+       (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
+		  (with-slots (location) object
+		    (set-position object
+				  (ecase location
+				    ,@(loop for location-form in location-forms collect
+					   (form->point location-form)))))))))
 
-(defmethod set-location :after ((location-designator symbol) (object finder-pattern)
-				parent-version)
-  "After block"
-  (with-slots (location) object
-    (set-position object
-	  (ecase location
-	    (top-left (make-instance 'point :x 0 :y 0))
-	    (bottom-left (make-instance 'point :y 0
-					:x (+ (* 4 (1- parent-version)) 14)))
-	    (top-right (make-instance 'point
-				      :y (+ (* 4 (1- parent-version)) 14)
-				      :x 0))))))
+(location-setter finder-pattern
+  (top-left (0 0))
+  (top-right (0 (+ (* 4 (1- parent-version)) 14)))
+  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)))
 
 (location-setter separator
   (top-left (0 0)
@@ -347,89 +357,18 @@ specialized on `point'."
 		     (loop for y below 7 with x = -1 collect
 			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
 
-;; (defmethod set-location ((location-designator symbol) (object separator) parent-version)
-;;   (declare (ignore parent-version))
-;;   (with-slots (content location) object
-;;     (ecase location-designator
-;;       ((top-left)
-;;        (setf location location-designator
-;; 	     content
-;; 	     (append (loop for x below 8 with y = 7 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-;; 		     (loop for y below 7 with x = 7 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
-;;       ((top-right)
-;;        (setf location location-designator
-;; 	     content
-;; 	     (append (loop for x below 8 with y = -1 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-;; 		     (loop for y below 7 with x = 7 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
-;;       ((bottom-left)
-;;        (setf location location-designator
-;; 	     content
-;; 	     (append (loop for x from -1 below 7 with y = 7 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-;; 		     (loop for y below 7 with x = -1 collect
-;; 			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))))))
-
-;; (defmethod set-location :after ((location-designator symbol) (object separator) parent-version)
-;;   (with-slots (location) object
-;;     (set-position object
-;; 	  (ecase location
-;; 	    (top-left (make-instance 'point :x 0 :y 0))
-;; 	    (bottom-left (make-instance 'point :y 0
-;; 					:x (+ (* 4 (1- parent-version)) 14)))
-;; 	    (top-right (make-instance 'point
-;; 				      :y (+ (* 4 (1- parent-version)) 14)
-;; 				      :x 0))))))
-
-(defmethod set-location ((location-designator symbol) (object format-pattern) parent-version)
-  (declare (ignore parent-version))
-  (with-slots (content location) object
-    (ecase location-designator
-      ((top-left)
-       (setf location location-designator
-	     content (append
-		       (loop for x below 9 with y = 8 unless (= x 6)
-			  collect (make-instance 'square :side 1 :pos (list x y)))
-		       (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
-			  collect (make-instance 'square :side 1 :pos (list x y))))))
-      ((top-right)
-       (setf location location-designator
-	     content (loop with x = 0 for y downfrom 7 to 0
-			 collect (make-instance 'square :side 1 :pos (list x y)))))
-      ((bottom-left)
-       (setf location location-designator
-	     content (loop for x downfrom 6 to 0 with y = 0
-			collect (make-instance 'square :side 1 :pos (list x y))))))))
-
-(defmethod set-location :after ((location-designator symbol) (object format-pattern) parent-version)
-  (with-slots (location) object
-    (set-position object
-	  (ecase location
-	    (top-left (make-instance 'point :x 0 :y 0))
-	    (bottom-left (make-instance 'point :y 8
-					:x (+ (* 4 (1- parent-version)) 14)))
-	    (top-right (make-instance 'point
-				      :y (+ (* 4 (1- parent-version)) 13)
-				      :x 8))))))
-
-;; (defmethod set-location ((location-designator symbol) (object version-pattern) parent-version)
-;;   (declare (ignore parent-version))
-;;   (with-slots (content location) object
-;;     (ecase location-designator
-;;       ((top-right)
-;;        (setf location location-designator
-;; 	     content (loop for x below 6 append
-;; 			  (loop for y below 3
-;; 			     collect (make-instance 'square :side 1 :pos (list x y))))))
-						     
-;;       ((bottom-left)
-;;        (setf location location-designator
-;; 	     content (loop for y below 6 append
-;; 			  (loop for x below 3
-;; 			     collect (make-instance 'square :side 1 :pos (list x y)))))))))
+(location-setter format-pattern
+  (top-left (0 0)
+	    (append (loop for x below 9 with y = 8 unless (= x 6)
+		       collect (make-instance 'square :side 1 :pos (list x y)))
+		    (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
+		       collect (make-instance 'square :side 1 :pos (list x y)))))
+  (top-right (8 (+ (* 4 (1- parent-version)) 13))
+	     (loop with x = 0 for y downfrom 7 to 0
+		collect (make-instance 'square :side 1 :pos (list x y))))
+  (bottom-left ((+ (* 4 (1- parent-version)) 13) 8)
+	       (loop for x downfrom 6 to 0 with y = 0
+		  collect (make-instance 'square :side 1 :pos (list x y)))))
 
 (location-setter version-pattern
   (bottom-left ((+ (* 4 (1- parent-version)) 10) 0)
@@ -441,42 +380,6 @@ specialized on `point'."
 			  (loop for y below 3
 			     collect (make-instance 'square :side 1 :pos (list x y))))))
 
-;; (defmethod set-location :after ((location-designator symbol) (object version-pattern) parent-version)
-;;   (with-slots (location) object
-;;     (set-position object
-;; 		  (ecase location
-;; 		    (bottom-left (make-instance 'point :y 0
-;; 						:x (+ (* 4 (1- parent-version)) 10)))
-;; 		    (top-right (make-instance 'point
-;; 					      :y (+ (* 4 (1- parent-version)) 10)
-;; 					      :x 0))))))
-
-
-
-(defmacro location-setter (class &body location-forms)
-  (flet ((location-form->point (location-form)
-	   (destructuring-bind (location (x-loc y-loc) &rest content-form) location-form
-	     (declare (ignore content-form))
-	     `((,location) (make-instance 'point :x ,x-loc :y ,y-loc)))))
-    `(progn
-       (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
-	 (declare (ignore parent-version))
-	 (with-slots (content location) object
-	   (ecase location-designator
-	     ,@(loop for location-form in location-forms collect
-		    `((,(first location-form))
-		      (setf location location-designator
-			    content ,(alexandria:last-elt location-form)))))))
-       (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
-		  (with-slots (location) object
-		    (set-position object
-				  (ecase location
-				    ,@(loop for location-form in location-forms collect
-					   (location-form->point location-form)))))))))
-
-;; (location-setter finder-pattern
-;;   (top-left (0 0))
-;;   (top-right (0 (+ (* 4 (1- parent-version)) 13))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
