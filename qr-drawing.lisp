@@ -549,3 +549,5 @@ specialized on `point'."
     (push data-module (modules qr-code)))
   (progress qr-code))
 
+(defun mask-2 (row col)
+  (evenp (+ row col)))
