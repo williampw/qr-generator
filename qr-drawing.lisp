@@ -570,3 +570,6 @@ specialized on `point'."
     (set-position data-module (filling-point qr-code) :relative nil)
     (push data-module (modules qr-code)))
   (progress qr-code))
+
+(defun mask-2 (row col)
+  (evenp (+ row col)))
