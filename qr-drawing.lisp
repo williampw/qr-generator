@@ -40,18 +40,7 @@
       (destructuring-bind (x y) position
 	(setf position (make-instance 'point :x x :y y))))))
 
-(defclass pattern ()
-  ((content :initarg :content
-	    :accessor content
-	    :documentation "List of shapes that make up the pattern.")
-   (position :initform (make-instance 'point :x 0 :y 0)
-	     :reader pos
-	     :documentation "Real coordinates in the geometrical space. Since it depends on
-  the containing object's size, it should not be set manually. Instead, set the abstract `location'
-  and let it set the position for you.")))
-
-(defmacro define-concentric-pattern (name specs &body body)
-  (declare (ignorable body))
+(defmacro concentric-shape (&body specs)
   (let ((content)
 	(parent-pos 0)
 	(parent-side 0))
@@ -64,28 +53,119 @@
 			 parent-pos new-pos)
 		   `(make-instance 'square :side ,side :pos ',(list new-pos new-pos)
 				   :color ',color)))))
-      `(defclass ,name (pattern)
-	 ((content :initform
-		   (list ,@(dolist (spec specs (nreverse content))
-			     (push (spec->square spec) content))))
-	  ,@body)))))
+      `(list ,@(dolist (spec specs (nreverse content))
+		 (push (spec->square spec) content))))))
 
-(define-concentric-pattern finder-pattern
-    ((:side 7 :color black :pos 0)
-     (:side 5 :color white :pos :deduce)
-     (:side 3 :color black :pos :deduce))
-  (location :reader loc
-	    :documentation "Location on the QR code. Should be set by providing either of
-  ('top-left 'top-right 'bottom-left) to `set-location', which will take care of updating
-  `position' to the appropriate coordinates."))
+(defclass pattern ()
+  ((content :initarg :content
+	    :accessor content
+	    :documentation "List of shapes that make up the pattern.")
+   (position :initform (make-instance 'point :x 0 :y 0)
+	     :reader pos
+	     :documentation "Real coordinates in the geometrical space. Since it depends on
+  the containing object's size, it should not be set manually. Instead, set the abstract `location'
+  and let it set the position for you.")))
 
-(define-concentric-pattern alignment-pattern
-    ((:side 5 :color black :pos -2)
-     (:side 3 :color white :pos :deduce)
-     (:side 1 :color black :pos :deduce)))
+(defgeneric set-location (location-designator pattern parent-version)
+  (:documentation "Set the location slot of PATTERN to LOCATION-DESIGNATOR and automatically move
+  PATTERN to the position corresponding to LOCATION-DESIGNATOR."))
 
-(defclass separator (pattern)
-  ((location :initarg :location)))
+(defmacro define-located-pattern (class (&key (unique-content nil)) &body location-forms)
+  ;; Define a pattern called CLASS whit a series of LOCATION-FORMS. Each location form should be
+  ;; (location-designator (x-position y-position) &optional content-at-location-designator.
+  (flet ((extract-locations (location-forms)
+	   (loop for (location (x-loc y-loc) &optional content-form) in location-forms
+	      collect location))
+	 (form->point (location-form)
+	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
+	     (declare (ignore content-form))
+	     `((,location) (make-instance 'point :x ,x-loc :y ,y-loc))))
+	 (form->position (location-form)
+	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
+	     (declare (ignore x-loc y-loc))
+	     (let ((content (or content-form unique-content)))
+	       (if content
+		      `((,location) (setf location location-designator
+					  content ,content))
+		      `((,location) (setf location location-designator)))))))
+    `(progn
+
+       (defclass ,class (pattern)
+	 ((location :reader location
+		    :documentation ,(format nil "Location on the QR code. Should be set by
+  providing either of ~a to `set-location', which will take care of updating `position' to the
+  appropriate coordinates." (extract-locations location-forms)))))
+       
+       (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
+	   (declare (ignore parent-version))
+	   (with-slots (content location) object
+	     (ecase location-designator
+	       ,@(loop for location-form in location-forms collect
+		      (form->position location-form)))))
+       
+       (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
+	   (with-slots (location) object
+	     (set-position object
+			   (ecase location
+			     ,@(loop for location-form in location-forms collect
+				    (form->point location-form)))))))))
+
+(define-located-pattern separator ()
+  (top-left (0 0)
+	    (append (loop for x below 8 with y = 7 collect
+			 (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		    (loop for y below 7 with x = 7 collect
+			 (make-instance 'square :side 1 :pos (list x y) :color 'white))))
+  (top-right (0 (+ (* 4 (1- parent-version)) 14))
+	     (append (loop for x below 8 with y = -1 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		     (loop for y below 7 with x = 7 collect
+			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))
+  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)
+	       (append (loop for x from -1 below 7 with y = 7 collect
+			    (make-instance 'square :side 1 :pos (list x y) :color 'white))
+		       (loop for y below 7 with x = -1 collect
+			    (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
+
+(define-located-pattern format-pattern ()
+  (top-left (0 0)
+	    (append (loop for x below 9 with y = 8 unless (= x 6)
+		       collect (make-instance 'square :side 1 :pos (list x y)))
+		    (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
+		       collect (make-instance 'square :side 1 :pos (list x y)))))
+  (top-right (8 (+ (* 4 (1- parent-version)) 13))
+	     (loop with x = 0 for y downfrom 7 to 0
+		collect (make-instance 'square :side 1 :pos (list x y))))
+  (bottom-left ((+ (* 4 (1- parent-version)) 13) 8)
+	       (loop for x downfrom 6 to 0 with y = 0
+		  collect (make-instance 'square :side 1 :pos (list x y)))))
+
+(define-located-pattern version-pattern ()
+  (bottom-left ((+ (* 4 (1- parent-version)) 10) 0)
+	       (loop for y below 6 append
+			  (loop for x below 3
+			     collect (make-instance 'square :side 1 :pos (list x y)))))
+  (top-right (0 (+ (* 4 (1- parent-version)) 10))
+	     (loop for x below 6 append
+			  (loop for y below 3
+			     collect (make-instance 'square :side 1 :pos (list x y))))))
+
+(define-located-pattern finder-pattern
+    (:unique-content
+     (concentric-shape
+       (:side 7 :color black :pos 0)
+       (:side 5 :color white :pos :deduce)
+       (:side 3 :color black :pos :deduce)))
+  (top-left (0 0))
+  (top-right (0 (+ (* 4 (1- parent-version)) 14)))
+  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)))
+
+(defclass alignment-pattern (pattern)
+  ((content :initform 
+	    (concentric-shape
+	     (:side 5 :color black :pos -2)
+	     (:side 3 :color white :pos :deduce)
+	     (:side 1 :color black :pos :deduce)))))
 
 (defclass horizontal-timing-pattern (pattern)
   ((generator :reader generator
@@ -103,12 +183,6 @@
 			      collect (make-instance 'square :pos (list x y)
 						     :color color :side 1))))))
 
-(defclass version-pattern (pattern)
-  ((location :initarg :location)))
-
-(defclass format-pattern (pattern)
-  ((location :initarg location)))
-
 (defclass dot (pattern)
   ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
    (color :initarg :color)))
@@ -117,8 +191,9 @@
   (with-slots (content color position) object
     (setf (color (first content)) color)))
 
-(defclass dark-module (dot)
-  ((color :initform 'black)))
+(define-located-pattern dark-module
+    (:unique-content (list (make-instance 'square :pos '(0 0) :side 1 :color 'black)))
+  (bottom-left ((+ (* 4 parent-version) 9) 8)))
 
 (defclass qr-code ()
   ((version :initarg :version
@@ -138,14 +213,15 @@
   (with-slots (size version filling-point patterns) object
     (setf size (qr-code-size version))
     (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
-    (setf patterns (add-finder-patterns version))
+    (setf patterns (add-located-patterns 'finder-pattern '(top-left top-right bottom-left) version))
     (setf patterns (append patterns
 			   (add-alignment-patterns patterns version)
-			   (add-separators version)
+			   (add-located-patterns 'separator '(top-left top-right bottom-left) version)
 			   (add-timing-patterns patterns size)
-			   (add-dark-module version)
-			   (add-format-patterns version)
-			   (add-version-patterns version)))))
+			   (add-located-patterns 'dark-module '(bottom-left) version)
+			   (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
+			   (when (>= version 7)
+			     (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -188,9 +264,9 @@
 
 (defmethod add ((point-a point) (point-b list))
   (destructuring-bind (x-b y-b) point-b
-   (make-instance 'point
-		  :x (+ (x point-a) x-b)
-		  :y (+ (y point-a) y-b))))
+    (make-instance 'point
+		   :x (+ (x point-a) x-b)
+		   :y (+ (y point-a) y-b))))
 
 (defgeneric multi (object scalar))
 
@@ -298,98 +374,22 @@ specialized on `point'."
 
 (defmethod set-position ((object pattern) point &key (relative t))
   (let ((moving-func (if relative #'move-by #'move-to)))
-   (with-slots (content position) object
-     (funcall moving-func position point)
-     (loop for shape in content do
-	  (funcall moving-func shape point))
-     object)))
-
-(defgeneric set-location (location-designator object parent-version)
-  (:documentation "Generic schmuck"))
-
-(defmacro location-setter (class &body location-forms)
-  (flet ((form->point (location-form)
-	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
-	     (declare (ignore content-form))
-	     `((,location) (make-instance 'point :x ,x-loc :y ,y-loc))))
-	 (form->position (location-form)
-	   (destructuring-bind (location (x-loc y-loc) &optional content-form) location-form
-	     (declare (ignore x-loc y-loc))
-	     (if content-form
-		 `((,location) (setf location location-designator
-				     content ,content-form))
-		 `((,location) (setf location location-designator))))))
-    `(progn
-       
-       (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
-	 (declare (ignore parent-version))
-	 (with-slots (content location) object
-	   (ecase location-designator
-	     ,@(loop for location-form in location-forms collect
-		    (form->position location-form)))))
-       
-       (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
-		  (with-slots (location) object
-		    (set-position object
-				  (ecase location
-				    ,@(loop for location-form in location-forms collect
-					   (form->point location-form)))))))))
-
-(location-setter finder-pattern
-  (top-left (0 0))
-  (top-right (0 (+ (* 4 (1- parent-version)) 14)))
-  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)))
-
-(location-setter separator
-  (top-left (0 0)
-	    (append (loop for x below 8 with y = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))
-  (top-right (0 (+ (* 4 (1- parent-version)) 14))
-	     (append (loop for x below 8 with y = -1 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))))
-  (bottom-left ((+ (* 4 (1- parent-version)) 14) 0)
-	       (append (loop for x from -1 below 7 with y = 7 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white))
-		     (loop for y below 7 with x = -1 collect
-			  (make-instance 'square :side 1 :pos (list x y) :color 'white)))))
-
-(location-setter format-pattern
-  (top-left (0 0)
-	    (append (loop for x below 9 with y = 8 unless (= x 6)
-		       collect (make-instance 'square :side 1 :pos (list x y)))
-		    (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
-		       collect (make-instance 'square :side 1 :pos (list x y)))))
-  (top-right (8 (+ (* 4 (1- parent-version)) 13))
-	     (loop with x = 0 for y downfrom 7 to 0
-		collect (make-instance 'square :side 1 :pos (list x y))))
-  (bottom-left ((+ (* 4 (1- parent-version)) 13) 8)
-	       (loop for x downfrom 6 to 0 with y = 0
-		  collect (make-instance 'square :side 1 :pos (list x y)))))
-
-(location-setter version-pattern
-  (bottom-left ((+ (* 4 (1- parent-version)) 10) 0)
-	       (loop for y below 6 append
-			  (loop for x below 3
-			     collect (make-instance 'square :side 1 :pos (list x y)))))
-  (top-right (0 (+ (* 4 (1- parent-version)) 10))
-	     (loop for x below 6 append
-			  (loop for y below 3
-			     collect (make-instance 'square :side 1 :pos (list x y))))))
+    (with-slots (content position) object
+      (funcall moving-func position point)
+      (loop for shape in content do
+	   (funcall moving-func shape point))
+      object)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; QR code buiding happens here
 
-(defun add-finder-patterns (version)
-  (loop for location in '(top-left top-right bottom-left)
-     for fp = (make-instance 'finder-pattern)
-     do (set-location location fp version)
-     collect fp))
+(defun add-located-patterns (pattern-type locations version)
+  (loop for location in locations
+     for object = (make-instance pattern-type)
+     do (set-location location object version)
+     collect object))
 
 (defun add-alignment-patterns (content version)
   (flet ((overlaps-with-finders (pattern)
@@ -400,18 +400,6 @@ specialized on `point'."
        do (set-position ali possible-pos)
        unless (overlaps-with-finders ali)
        collect ali)))
-
-(defun add-separators (version)
-  (loop for location in '(top-left top-right bottom-left)
-     for sp = (make-instance 'separator)
-     do (set-location location sp version)
-     collect sp))
-
-(defun add-format-patterns (version)
-  (loop for location in '(top-left top-right bottom-left)
-     for fp = (make-instance 'format-pattern)
-     do (set-location location fp version)
-     collect fp))
 
 (defun add-timing-patterns (patterns size)
   (flet ((overlaps-with-finders (shape)
@@ -427,17 +415,6 @@ specialized on `point'."
 	      (remove-if #'overlaps-with-finders (funcall generator size))))
       (list horizontal-timing-pattern vertical-timing-pattern))))
 
-(defun add-dark-module (version)
-  (let ((dark-module (make-instance 'dark-module)))
-    (set-position dark-module (make-instance 'point :x (+ (* 4 version) 9) :y 8))
-    (list dark-module)))
-
-(defun add-version-patterns (version)
-  (when (>= version 7)
-    (loop for location in '(bottom-left top-right)
-       for vp = (make-instance 'version-pattern)
-       do (set-location location vp version)
-       collect vp)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -494,9 +471,9 @@ specialized on `point'."
 			 :initial-contents (array-operations:flatten
 					    (pixelize qr-code module-size))))
 	 (png (make-instance 'zpng:png
-                             :color-type :grayscale
-                             :width png-size
-                             :height png-size
+			     :color-type :grayscale
+			     :width png-size
+			     :height png-size
 			     :image-data px)))    
     (zpng:write-png png file)))
 
@@ -540,7 +517,8 @@ specialized on `point'."
 	(setf step-move (next-step-move step-move))
 	(cond
 	  ((and overlapping-pattern (eql (type-of overlapping-pattern) 'vertical-timing-pattern))
-	   (prog1 (progress qr-code) (format t "i stepped VTP~%") (setf step-move :side)))
+	   (prog1 (progress qr-code)
+	     (setf step-move :side)))
 	  (overlapping-pattern (progress qr-code))
 	  (t filling-point))))))
 
@@ -562,11 +540,12 @@ specialized on `point'."
 	(error 'out-of-bounds-error)      
 	point)))
 
-(define-condition out-of-bounds-error (error)
-  ((text :initform "Below the lower limit or above the upper limit of the QR code")))
+;; (define-condition out-of-bounds-error (error)
+;;   ((text :initform "Below the lower limit or above the upper limit of the QR code")))
 
 (defun write-module (qr-code bit)
   (let ((data-module (make-instance 'dot :color (if (zerop bit) 'black 'white))))
     (set-position data-module (filling-point qr-code) :relative nil)
     (push data-module (modules qr-code)))
   (progress qr-code))
+
