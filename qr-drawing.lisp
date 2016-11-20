@@ -214,14 +214,15 @@
     (setf size (qr-code-size version))
     (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
     (setf patterns (add-located-patterns 'finder-pattern '(top-left top-right bottom-left) version))
-    (setf patterns (append patterns
-			   (add-alignment-patterns patterns version)
-			   (add-located-patterns 'separator '(top-left top-right bottom-left) version)
-			   (add-timing-patterns patterns size)
-			   (add-located-patterns 'dark-module '(bottom-left) version)
-			   (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
-			   (when (>= version 7)
-			     (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
+    (setf patterns
+	  (append patterns
+		  (add-alignment-patterns patterns version)
+		  (add-located-patterns 'separator '(top-left top-right bottom-left) version)
+		  (add-timing-patterns patterns size)
+		  (add-located-patterns 'dark-module '(bottom-left) version)
+		  (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
+		  (when (>= version 7)
+		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -551,3 +552,48 @@ specialized on `point'."
 
 (defun mask-2 (row col)
   (evenp (+ row col)))
+
+(defparameter *masks*
+  (list (lambda (row col) (evenp (+ row col)))
+	(lambda (row col) (declare (ignorable col)) (evenp row))
+	(lambda (row col) (declare (ignore row)) (zerop (mod col 3)))
+	(lambda (row col) (zerop (mod (+ row col) 3)))
+	(lambda (row col) (evenp (+ (floor row 2) (floor col 3))))
+	(lambda (row col) (zerop (+ (mod (* row col) 2)
+				    (mod (* row col) 3))))
+	(lambda (row col) (evenp (+ (mod (* row col) 2)
+				    (mod (* row col) 3))))
+	(lambda (row col) (evenp (+ (mod (+ row col) 2)
+				    (mod (* row col) 3))))))
+
+(defun match-pattern (array pattern)
+  (let* ((width (length pattern))
+	 (height (length (first pattern)))
+	 (pattern-array (make-array (list width height)
+				    :initial-contents pattern)))
+    (destructuring-bind (nrows ncols) (array-dimensions array)
+      (loop for row upto(- nrows height) sum
+	   (loop for col upto (- ncols width)
+		for row-end = (if (< (+ row height) nrows) (+ row height))
+		for col-end = (if (< (+ col width) ncols) (+ col width))
+	      count (equalp pattern-array
+			    (cl-slice:slice array
+					    (cons row row-end)
+					    (cons col col-end))))))))
+(defun penalty-2 (array)
+  (* 3
+     (+ (match-pattern array '((0 0) (0 0)))
+	(match-pattern array '((255 255) (255 255))))))
+
+(defun count-array (array item)
+  (count item (array-operations:flatten array)))
+
+(defun penalty-4 (array)
+  (let* ((dark-modules (count-array array 0))
+	 (total-modules (apply #'* (array-dimensions array)))
+	 (dark-percentage (* 100 (/ dark-modules total-modules)))
+	 (sub-multiple (* 5 (floor dark-percentage 5)))
+	 (sup-multiple (+ 5 sub-multiple))
+	 (final-values (list (/ (abs (- sub-multiple 50)) 5)
+			     (/ (abs (- sup-multiple 50)) 5))))
+    (reduce #'min final-values :key (lambda (x) (* 10 x)))))
