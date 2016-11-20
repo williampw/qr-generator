@@ -146,15 +146,6 @@ to make it reach CAPACITY."
 (defun product (&rest integers)
   (reduce #'logxor integers))
 
-(defun remove-trailing-zeros (list)
-  (let ((result nil)
-	(seen-nonzero nil))
-    (dolist (number (reverse list))
-      (when (or seen-nonzero (not (zerop number)))
-	(setf seen-nonzero t)
-	(push number result)))
-    result))
-
 (defun nil-padding (n)
   (loop repeat n collect nil))
 
@@ -174,19 +165,13 @@ to make it reach CAPACITY."
 	 (loop for product in intermediate-products
 	      sum (or (nth k product) 0)))))
 
-(defun multiply-exponent-list (poly-a poly-b)
-  (let ((basis (mapcar (lambda (x) (mod (+ x (first poly-a)) 255)) poly-b))
-	(second (mapcar (lambda (x) (mod (+ x (second poly-a)) 255)) poly-b)))
-    (loop for a in (append basis (cons nil nil))
-       for b in (append (cons nil nil) second) ;; do
-       collect (galois-exponent (reduce #'product
-					(mapcar #'nth-galois (remove-if #'null (list a b))))))))
-
-(defvar *generator-galois*
-  (loop for i from 0 upto 35
-     for pol = (list i 0) then (multiply-exponent-list (list i 0) pol)
-     collect (cons (1+ i) pol)) 
-  "Polynomials, in the Galois field, used as generators in the Reed-Solomon process.")
+;; (defun multiply-exponent-list (poly-a poly-b)
+;;   (let ((basis (mapcar (lambda (x) (mod (+ x (first poly-a)) 255)) poly-b))
+;; 	(second (mapcar (lambda (x) (mod (+ x (second poly-a)) 255)) poly-b)))
+;;     (loop for a in (append basis (cons nil nil))
+;;        for b in (append (cons nil nil) second) ;; do
+;;        collect (galois-exponent (reduce #'product
+;; 					(mapcar #'nth-galois (remove-if #'null (list a b))))))))
 
 (defun split-message-string (message)
   (mapcar (lambda (x) (parse-integer x :radix 2))

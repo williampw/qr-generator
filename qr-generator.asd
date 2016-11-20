@@ -8,6 +8,7 @@
   :serial t
   :components ((:file "package")
 	       (:file "qr-tables")
+	       (:file "polynomials")
                (:file "qr-generator")
 	       (:file "qr-drawing")))
 
