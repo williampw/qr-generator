@@ -67,6 +67,9 @@ error correction-mode and encoding mode."
 (defun chunk (sequence chunk-size)
   "Split SEQUENCE into chunks of CHUNK-SIZE characters. The final block may be smaller than
 CHUNK-SIZE. Returns the list of subsequences."
+  ;; Collect the subsequences as long as there is room for a full chunk, ie as long as end is below
+  ;; the length. The final chunk is collected without specifying the end, and appended to the list
+  ;; before reversing it.
   (do ((start 0 (+ start chunk-size))
        (end chunk-size (+ end chunk-size))
        (end-max (1- (length sequence)))
@@ -178,15 +181,6 @@ to make it reach CAPACITY."
        for b in (append (cons nil nil) second) ;; do
        collect (galois-exponent (reduce #'product
 					(mapcar #'nth-galois (remove-if #'null (list a b))))))))
-
-(defun galois-exponent (integer)
-  (car (rassoc (abs integer) *log-antilog*)))
-
-(defun nth-galois (integer)
-  "Return the integer-th element of the Galois field"
-  (if (null integer)
-      0
-      (assocval integer *log-antilog*)))
 
 (defvar *generator-galois*
   (loop for i from 0 upto 35

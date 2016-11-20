@@ -278,11 +278,13 @@
   "Number of 8-bit words in a QR code given its version and error correction.")
 
 (defvar *log-antilog*
-  (loop for i upto 285
+  (loop for i below 256
+     with result-vector = (make-array 256)
      for j = 1 then (if (< 255 (* 2 j))
 			(logxor (* 2 j) 285)
 			(* 2 j))
-     collect (cons i j))
+     do (setf (aref result-vector i) j)
+     finally (return result-vector))
   "Galois Field")
 
 (defvar *error-correction-codewords*
