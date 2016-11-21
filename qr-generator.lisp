@@ -32,6 +32,9 @@
 	((string-equal level "H") :H)
 	(t (error "Unrecognized error correction level. Must be one of (L M Q H)"))))
 
+(defun analyze-text (input-text)
+  "Reads an INPUT-TEXT string and returns a plist containg the suitable version and encoding mode.")
+
 (defun encoding-mode-indicator (encoding-mode)
   "Represents the encoding mode indicator on a 4-bit string."
   (let ((encoding-mode-indicator (assocval encoding-mode *encoding-mode-indicators*)))
@@ -151,36 +154,14 @@ to make it reach CAPACITY."
 (defun message-polynomial (message)
   (make-instance 'polynomial :coefs (nreverse (split-message-string message))))
 
-(defun shift-polynomial (polynomial n)
-  (multiply polynomial
-	    (loop for i upto n collect (if (= n i) 1 0))))
-
-(defun prepare-polynomials (message-polynomial generator-poly)
-  (let* ((message-shift (degree generator-poly))
-	 (generator-shift (degree message-polynomial)))
-    (values (multiply message-polynomial (x-power-n message-shift))
-	    (multiply message-polynomial (x-power-n generator-shift)))))
-
-(defun step1a (message-poly generator-poly)
-  (let ((lead-coef (alexandria:last-elt (coefs message-poly))))
-    (multiply generator-poly lead-coef)))
-
-(defun step1b (message-poly generator-poly)
-  (add message-poly generator-poly))
-
 (defun select-generator-galois (version error-correction-mode)
   (let ((generator-length (assocval error-correction-mode
 				    (assocval version *error-correction-codewords*))))
     (aref *generator-galois* (1- generator-length))))
 
 (defun reed-solomon (message-poly generator-poly)
-  (multiple-value-bind (mpo ggo) (prepare-polynomials message-poly generator-poly)
-    (loop repeat (count-if-not #'zerop (coefs mpo))
-       for gg = ggo then (setf (coefs gg) (rest (coefs gg)))
-       for mp = mpo then r1b
-       for r1a = (step1a mp gg)
-       for r1b = (add mp r1a)
-       finally (return (nreverse (coefs r1b))))))
+  (divide (multiply message-poly (x-power-n (degree generator-poly)))
+	  generator-poly))
 
 (defun submessage-to-int (submessage)
   (split-message-string submessage))
@@ -205,7 +186,7 @@ to make it reach CAPACITY."
   (destructuring-bind (&key version error-correction-mode) property-list
     (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
 	(assocval error-correction-mode (assocval version *block-information*))
-      (declare (ignorable blocks-in-grp2 words-in-block1 words-in-block2))
+      (declare (ignore blocks-in-grp2 words-in-block1 words-in-block2))
      (= 1 blocks-in-grp1))))
 
 (defun correction-codewords (chunked-polynomials property-list)
@@ -216,10 +197,10 @@ to make it reach CAPACITY."
 			    (select-generator-galois version error-correction-mode))))))
 
 (defun interleave-blocks (groups)
-  (let ((blocks (loop for group in groups nconc
+  (let ((blocks (loop for group in groups append
 		     (loop for this-block in group collect this-block))))
     (loop for i below (reduce #'max blocks :key #'length)
-       nconc (loop for this-block in blocks
+       append (loop for this-block in blocks
 		collect (nth i this-block)) into result
        finally
 	 (return (remove-if #'null result)))))
@@ -234,28 +215,29 @@ to make it reach CAPACITY."
        (append (interleave-blocks (reverse-poly))
 	      (interleave-blocks correction-codewords)))))
 
-(defparameter text "HELLO WOLRD GLOUBIBOULGAAAA MARCHE A LOMBRE")
-(defparameter level "M")
-(multiple-value-bind (msg plist) (string-to-message text level)
-  (let* ((chunked-poly
-	  (chunks-to-polynomials (group-message msg plist))))
-    (format t "~a~%" chunked-poly)
-    (structure-message chunked-poly
-		       (correction-codewords chunked-poly plist)
-		       plist)))
-(defvar test5 "0100001101010101010001101000011001010111001001100101010111000010011101110011001000000110000100100000011001100111001001101111011011110110010000100000011101110110100001101111001000000111001001100101011000010110110001101100011110010010000001101011011011100110111101110111011100110010000001110111011010000110010101110010011001010010000001101000011010010111001100100000011101000110111101110111011001010110110000100000011010010111001100101110000011101100000100011110110000010001111011000001000111101100")
+;; (defparameter text "HELLO WOLRD")
+;; (defparameter level "M")
+;; (multiple-value-bind (msg plist) (string-to-message text level)
+;;   (let* ((chunked-poly
+;; 	  (chunks-to-polynomials (group-message msg plist))))
+;;     (format t "~a~%" chunked-poly)
+;;     ;; (structure-message chunked-poly
+;;     ;; 		       (correction-codewords chunked-poly plist)
+;;     ;; 		       plist)
+;;     ))
+;; (defvar test5 "0100001101010101010001101000011001010111001001100101010111000010011101110011001000000110000100100000011001100111001001101111011011110110010000100000011101110110100001101111001000000111001001100101011000010110110001101100011110010010000001101011011011100110111101110111011100110010000001110111011010000110010101110010011001010010000001101000011010010111001100100000011101000110111101110111011001010110110000100000011010010111001100101110000011101100000100011110110000010001111011000001000111101100")
 
-(let* ((msg test5)
-       (plist (list :version 5 :error-correction-mode :Q))
-       (chunked-poly
-	(chunks-to-polynomials (group-message msg plist)))
-       (ec-words (correction-codewords chunked-poly plist)))
-  (format t "~a~%" chunked-poly)
-  (format t "~a~%" ec-words)
-  (structure-message chunked-poly
-		     ec-words
-		     plist))
-(print (string= "00100000010110110000101101111000110100010111001011011100010011010100001101000000111011000001000111101100" (string-to-message "HELLO WORLD" "Q")))
+;; (let* ((msg test5)
+;;        (plist (list :version 5 :error-correction-mode :Q))
+;;        (chunked-poly
+;; 	(chunks-to-polynomials (group-message msg plist)))
+;;        (ec-words (correction-codewords chunked-poly plist)))
+;;   (format t "~a~%" chunked-poly)
+;;   (format t "~a~%" ec-words)
+;;   (structure-message chunked-poly
+;; 		     ec-words
+;; 		     plist))
+;; (print (string= "00100000010110110000101101111000110100010111001011011100010011010100001101000000111011000001000111101100" (string-to-message "HELLO WORLD" "Q")))
 
 (defun binarize-integers (interleaved-data)
   (format nil "~{~8,'0b~}" interleaved-data))

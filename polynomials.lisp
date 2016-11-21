@@ -112,8 +112,7 @@
        for loop-divisor = (multiply divisor (x-power-n (- (degree dividend) (degree divisor))))
        then (setf (coefs loop-divisor) (rest (coefs loop-divisor)))
        for intermediate-product = (multiply loop-divisor (alexandria:last-elt (coefs loop-dividend)))
-       do (print loop-dividend)
-	 while (>= (degree loop-dividend) (degree divisor))
+       while (>= (degree loop-dividend) (degree divisor))
        finally (return loop-dividend))))
 
 (defvar *generator-galois*
