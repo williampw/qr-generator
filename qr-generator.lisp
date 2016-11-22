@@ -9,7 +9,7 @@
   (digit-char-p char))
 
 (defun alphanumeric-mode-p (char)
-  (let ((alphabet (map 'list #'character "ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./")))
+  (let ((alphabet (map 'list #'character "ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:")))
     (or (numeric-mode-p char)
 	(member char alphabet))))
 
@@ -47,7 +47,7 @@ error correction-mode and encoding mode."
      for version-level = (assocval version *character-capacities*)
      for correction-level = (assocval error-correction-mode version-level)
      for max-chars = (assocval encoding-mode correction-level) do
-       (when (> max-chars string-length)
+       (when (>= max-chars string-length)
 	   (return version))))
 
 (defun get-qr-version-from-string (string error-correction-mode)
