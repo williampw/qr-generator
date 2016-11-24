@@ -44,11 +44,10 @@
   "Determines the suitable QR code version for a string whose length is STRING-LENGTH, given its
 error correction-mode and encoding mode."
   (loop for version from 1 upto 40
-     for version-level = (assocval version *character-capacities*)
-     for correction-level = (assocval error-correction-mode version-level)
-     for max-chars = (assocval encoding-mode correction-level) do
-       (when (>= max-chars string-length)
-	   (return version))))
+     for key-triplet = (list version error-correction-mode encoding-mode)
+     for capacity = (gethash key-triplet *character-capacities*)
+     do (when (>= capacity string-length)
+	  (return version))))
 
 (defun get-qr-version-from-string (string error-correction-mode)
   (let ((length (length string))
@@ -85,18 +84,17 @@ CHUNK-SIZE. Returns the list of subsequences."
   (:documentation "Represent DATA as a string of binary numbers."))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
-  (format nil "~{~b~}" (mapcar #'parse-integer
-			       (chunk data 3))))
+  (format nil "~{~b~}" (mapcar #'parse-integer (chunk data 3))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
   (flet ((represent-substring (substring)
 	   (ecase (length substring)
 	     ((1)
-	      (padded-binary (assocval (char substring 0) *alphanumeric-encoding*)
+	      (padded-binary (gethash (char substring 0) *alphanumeric-encoding*)
 			     6))
 	     ((2)
-	      (padded-binary (+ (* 45 (assocval (char substring 0) *alphanumeric-encoding*))
-				(assocval (char substring 1) *alphanumeric-encoding*))
+	      (padded-binary (+ (* 45 (gethash (char substring 0) *alphanumeric-encoding*))
+				(gethash (char substring 1) *alphanumeric-encoding*))
 			     11)))))
     (let ((substrings (chunk data 2)))
       (format nil "~{~b~}" (mapcar #'represent-substring substrings)))))
@@ -123,8 +121,8 @@ CHUNK-SIZE. Returns the list of subsequences."
 
 (defun qr-capacity (version error-correction-mode)
   "Number of bits required to fill a QR code of given VERSION with given ERROR-CORRECTION-MODE."
-  (* 8 (assocval error-correction-mode
-		 (assocval version *capacity*))))
+  (* 8 (getf (gethash (list version error-correction-mode) *codewords*)
+	     :total-codewords)))
 
 (defun terminator (string-length capacity)
   "Terminator string that should be added at the end of an encoded string whose length is 
@@ -155,8 +153,8 @@ to make it reach CAPACITY."
   (make-instance 'polynomial :coefs (nreverse (split-message-string message))))
 
 (defun select-generator-galois (version error-correction-mode)
-  (let ((generator-length (assocval error-correction-mode
-				    (assocval version *error-correction-codewords*))))
+  (let ((generator-length (getf (gethash (list version error-correction-mode) *codewords*)
+				:ec-codewords)))
     (aref *generator-galois* (1- generator-length))))
 
 (defun reed-solomon (message-poly generator-poly)
@@ -168,13 +166,13 @@ to make it reach CAPACITY."
 
 (defun group-message (message property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
-    (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
-	(assocval error-correction-mode (assocval version *block-information*))
-      (let ((group1 (chunk message (* 8 words-in-block1))))
-	(append (list group1)
-		(unless (zerop blocks-in-grp2)
-		  (list (chunk (subseq message (* 8 blocks-in-grp1 words-in-block1))
-			       (* 8 words-in-block2)))))))))
+    (let* ((block-info (gethash (list version error-correction-mode) *block-information*))
+	   (group1 (chunk message (* 8 (getf block-info :words-in-b1)))))
+      (append (list group1)
+	      (when (getf block-info :blocks-in-g2)
+		(list (chunk (subseq message (* 8 (getf block-info :blocks-in-g1)
+						(getf block-info :words-in-b1)))
+			     (* 8 (getf block-info :words-in-b2)))))))))
 
 (defun chunks-to-polynomials (chunks)
   ;; (mapcar #'message-polynomial (alexandria:flatten chunks))

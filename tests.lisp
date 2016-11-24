@@ -13,10 +13,14 @@
   (lambda ()
     (char "ABCDEFGHIJKLMNOPQRSTUVWXYZ$%*+-./: " (random 35))))
 
+(def-suite main)
+
+(in-suite main)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Basics tests to check the data analysis
 
-(def-suite data-analysis
+(def-suite data-analysis :in main
     :description "Textual data analysis: find the encoding-mode, the version, etc.")
 
 (in-suite data-analysis)
@@ -53,7 +57,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Test the data encoding process: find the right encoding mode according to the encoding type and length of the string, find it from the original string, etc.
 
-(def-suite data-encoding)
+(def-suite data-encoding :in main)
 
 (in-suite data-encoding)
 
