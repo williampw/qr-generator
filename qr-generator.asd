@@ -7,7 +7,10 @@
   :long-description
   "QR code is registered trademark of DENSO WAVE INCORPORATED"
   ;; :in-order-to ((test-op (test-op "qr-generator-test"))
-  :depends-on (#:alexandria #:array-operations #:zpng)
+  :depends-on (#:alexandria
+	       #:array-operations
+	       #:zpng
+	       #:cl-slice)
   :serial t
   :components ((:file "package")
 	       (:file "qr-tables")
