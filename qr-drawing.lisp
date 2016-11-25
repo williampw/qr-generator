@@ -536,22 +536,20 @@ specialized on `point'."
 
 (defmethod check-inside ((qr-code qr-code) (point list))
   (destructuring-bind (x y) point
-    (declare (ignorable y))
+    (when (minusp y)
+      (error "Too much data."))
     (if (or (minusp x) (>= x (size qr-code)))
 	(error 'out-of-bounds-error)      
 	point)))
 
-;; (define-condition out-of-bounds-error (error)
-;;   ((text :initform "Below the lower limit or above the upper limit of the QR code")))
+(define-condition out-of-bounds-error (error)
+  ((text :initform "Below the lower limit or above the upper limit of the QR code")))
 
 (defun write-module (qr-code bit)
   (let ((data-module (make-instance 'dot :color (if (zerop bit) 'black 'white))))
     (set-position data-module (filling-point qr-code) :relative nil)
     (push data-module (modules qr-code)))
   (progress qr-code))
-
-(defun mask-2 (row col)
-  (evenp (+ row col)))
 
 (defparameter *masks*
   (list (lambda (row col) (evenp (+ row col)))
@@ -567,9 +565,10 @@ specialized on `point'."
 				    (mod (* row col) 3))))))
 
 (defun match-pattern (array pattern)
-  (let* ((width (length pattern))
-	 (height (length (first pattern)))
-	 (pattern-array (make-array (list width height)
+  "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal list."
+  (let* ((height (length pattern))
+	 (width (length (first pattern)))
+	 (pattern-array (make-array (list height width)
 				    :initial-contents pattern)))
     (destructuring-bind (nrows ncols) (array-dimensions array)
       (loop for row upto(- nrows height) sum
@@ -580,10 +579,53 @@ specialized on `point'."
 			    (cl-slice:slice array
 					    (cons row row-end)
 					    (cons col col-end))))))))
+
+(defun greedy-contiguous (array start-row start-col)
+  "Progresses in ARRAY from starting coordinates START-ROW & START-COL as long as the values read
+are the  same as in the first cell."
+  (destructuring-bind (nrows ncols) (array-dimensions array)
+    (declare (ignore nrows))
+    (loop for col upfrom start-col below ncols
+       for value = (aref array start-row col)
+       with seeked-value = (aref array start-row start-col)
+       while (= seeked-value value)
+       count 1)))
+
+(defun score-contiguous (n-contig-cells)
+  "Returns the penalty score of N-CONTIG-CELLS contiguous cells with same value."
+  (if (< n-contig-cells 5)
+      0
+      (+ 3 (- n-contig-cells 5))))
+
+(defun count-contiguous (array)
+  (destructuring-bind (nrows ncols) (array-dimensions array)
+    (loop for row upfrom 0 below nrows sum
+	 (do ((col 0 (+ col (greedy-contiguous array row col)))
+	      (contig-score 0))
+	     ((>= col ncols) contig-score)
+	   (incf contig-score
+		 (score-contiguous (greedy-contiguous array row col)))))))
+
+(defun penalty-1 (array)
+  (+ (count-contiguous array) (count-contiguous (transpose array))))
+
 (defun penalty-2 (array)
   (* 3
      (+ (match-pattern array '((0 0) (0 0)))
 	(match-pattern array '((255 255) (255 255))))))
+
+(defun transpose (array)
+  (array-operations:permute '(1 0) array))
+
+(defun penalty-3 (array)
+  (let* ((base-pattern '(255 0 255 255 255 0 255 0 0 0 0))
+	 (pattern (list base-pattern))
+	 (anti-pattern (list (reverse base-pattern))))
+    (* 40
+       (+ (match-pattern array pattern)
+	  (match-pattern array anti-pattern)
+	  (match-pattern (transpose array) pattern)
+	  (match-pattern (transpose array) anti-pattern)))))
 
 (defun count-array (array item)
   (count item (array-operations:flatten array)))
@@ -597,3 +639,6 @@ specialized on `point'."
 	 (final-values (list (/ (abs (- sub-multiple 50)) 5)
 			     (/ (abs (- sup-multiple 50)) 5))))
     (reduce #'min final-values :key (lambda (x) (* 10 x)))))
+
+(defun penalty (array)
+  (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
