@@ -176,10 +176,9 @@ to make it reach CAPACITY."
 			     (* 8 (getf block-info :words-in-b2)))))))))
 
 (defun chunks-to-polynomials (chunks)
-  ;; (mapcar #'message-polynomial (alexandria:flatten chunks))
   (loop for group in chunks collect
        (loop for this-block in group
-	    collect (message-polynomial this-block))))
+	  collect (message-polynomial this-block))))
 
 (defun small-qr-code-p (property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
@@ -196,12 +195,11 @@ to make it reach CAPACITY."
 (defun interleave-blocks (groups)
   (let ((blocks (loop for group in groups append
 		     (loop for this-block in group collect
-			(reverse (coefs this-block))))))
+			  (reverse (coefs this-block))))))
     (loop for i below (reduce #'max blocks :key #'length)
        append (loop for this-block in blocks
-		collect (nth i this-block)) into result
-       finally
-	 (return (remove-if #'null result)))))
+		 collect (nth i this-block)) into result
+       finally (return (remove-if #'null result)))))
 
 (defun structure-message (chunked-polynomials correction-codewords property-list)
   (flet ((reverse-poly ()
@@ -218,7 +216,7 @@ to make it reach CAPACITY."
 
 (defun complete-with-remainder (binary-data version)
   (concatenate 'string binary-data
-	       (padded-binary 0 (assocval version *remainders*))))
+	       (padded-binary 0 (aref *remainders* version))))
 
 (defun text-to-binary (text correction-level)
   (multiple-value-bind (message property-list) (string-to-message text correction-level)
@@ -230,4 +228,3 @@ to make it reach CAPACITY."
 					       property-list)))
       (complete-with-remainder (binarize-integers structured-data)
 			       (getf property-list :version)))))
-
