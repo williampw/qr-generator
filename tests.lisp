@@ -116,6 +116,10 @@
 		  (qr-generator::binarize-integers structured-data) 5)
 		 reference))))
 
+(test format-bits
+  (is (equalp (qr-generator::coefs (qr-generator::format-string :L 4))
+	      '(1 1 1 1 0 1 0 0 0 1 1 0 0 1 1))))
+
 ;;; Send a mail to Carolyn Eby to let her know codeword #55 is wrong
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

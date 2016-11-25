@@ -133,6 +133,5 @@
 						  (degree base-generator)))
 				    base-generator )
      for result = (add format-poly generator-poly)
-     do (print format-poly)
      while (> (degree format-poly) 10)
      finally (return result)))

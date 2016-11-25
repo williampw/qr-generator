@@ -207,16 +207,17 @@ to make it reach CAPACITY."
 		(loop for poly in group collect
 		     (reverse (coefs poly))))))
    (if (small-qr-code-p property-list)
-       (alexandria:flatten (append (reverse-poly) correction-codewords))
+       (alexandria:flatten (append (reverse-poly) (reverse (coefs (first (first correction-codewords))))))
        (append (interleave-blocks chunked-polynomials)
-	      (interleave-blocks correction-codewords)))))
+	       (interleave-blocks correction-codewords)))))
 
 (defun binarize-integers (interleaved-data)
   (format nil "~{~8,'0b~}" interleaved-data))
 
 (defun complete-with-remainder (binary-data version)
   (concatenate 'string binary-data
-	       (padded-binary 0 (aref *remainders* version))))
+	       (unless (zerop (aref *remainders* version))
+		 (padded-binary 0 (aref *remainders* version)))))
 
 (defun text-to-binary (text correction-level)
   (multiple-value-bind (message property-list) (string-to-message text correction-level)
@@ -228,3 +229,14 @@ to make it reach CAPACITY."
 					       property-list)))
       (complete-with-remainder (binarize-integers structured-data)
 			       (getf property-list :version)))))
+
+(defun format-string (error-correction-mode mask)
+  (let* ((ec-integer (getf (list :M 0 :L 1 :H 2 :Q 3) error-correction-mode))
+	 (format-string (format nil "~2,'0b~3,'0b" ec-integer mask))
+	 (format-poly (make-instance 'polynomial
+				     :coefs (nreverse (mapcar #'parse-integer
+							      (chunk format-string 1)))))
+	 (ec-poly (format-divide format-poly))
+	 (combined (make-instance 'polynomial
+				  :coefs (append (coefs ec-poly) (coefs format-poly)))))
+    (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))

@@ -257,7 +257,7 @@
 
 ;;; The dot is a basic module used to represent the data held by the QR code. Since its color
 ;;; varies, unlike the other patterns, it has a color clot. A specialized setter takes care of
-;;; updating the square in the dot, whenever the dot's colo changes
+;;; updating the square in the dot, whenever the dot's color changes
 
 (defclass dot (pattern)
   ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
@@ -754,3 +754,19 @@ are the  same as in the first cell."
 
 (defun penalty (array)
   (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
+
+(defun fill-format-pattern (format-pattern format-string)
+  (let ((bits (mapcar #'parse-integer (chunk format-string 1))))
+    (ecase (location format-pattern)
+      ((top-left top-right)
+       (loop for module in (content format-pattern)
+	  for bit in bits
+	  do (setf (color module) (if (zerop bit) 'black 'white)))))))
+
+(defun fill-format-patterns (qr-code)
+  (with-slots (mask error-correction-mode) qr-code
+    (let ((format-string (format-string error-correction-mode mask))
+	  (format-patterns (remove-if-not (lambda (obj) (eql (type-of obj) 'format-pattern))
+					  (patterns qr-code))))
+      (dolist (fp format-patterns)
+	(fill-format-pattern fp format-string)))))
