@@ -2,7 +2,9 @@
   :description "qr-generator attempts to generate QR codes from strings according to the ISO specification."
   :author "William Woelffel <william.woelffel@gmail.com>"
   :license "GPLv3"
-  :depends-on (#:qr-generator #:fiveam)
+  :depends-on (#:qr-generator
+	       #:fiveam
+	       #:png-read)
   :components ((:file "tests"))
   :perform (test-op (o s) (symbol-call :fiveam '#:run!)))
 

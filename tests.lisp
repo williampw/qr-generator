@@ -55,7 +55,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Test the data encoding process: find the right encoding mode according to the encoding type and length of the string, find it from the original string, etc.
+;;; Test the data encoding process: find the right encoding mode according to the encoding type and
+;;; length of the string, find it from the original string, etc. 
 
 (def-suite data-encoding :in main)
 
@@ -116,3 +117,23 @@
 		 reference))))
 
 ;;; Send a mail to Carolyn Eby to let her know codeword #55 is wrong
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Test empty QR code generation
+
+(def-suite qr-generation :in main)
+
+(in-suite qr-generation)
+
+(defun version-name (version)
+  (format nil "empty-codes/version~2,'0d.png" version))
+
+(defun get-reference-data (version)
+  (png-read:image-data (png-read:read-png-file (version-name version))))
+
+(test empty
+  (dotimes (version 40)
+    (is (equalp (qr-generator::transpose (get-reference-data (1+ version)))
+		(qr-generator::pixelize
+		 (make-instance 'qr-generator::qr-code :version (1+ version))
+		 4)))))

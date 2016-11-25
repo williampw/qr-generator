@@ -1,14 +1,63 @@
 (in-package #:qr-generator)
 
-(defun qr-code-size (version)
-  (+ (* 4 (1- version)) 21))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; 					   QR code class
 
-(defun alignment-pattern-positions (version)
-  (let ((grid (aref *alignment-pattern-centers* (1- version))))
-    (alexandria:map-product #'list  grid grid)))
+;;; A `qr-code' object contains two lists of `pattern' objects: the `patterns' slot is a list of
+;;; patterns defined by the specification (finder pattern, alignement pattern, etc.), the `modules'
+;;; slot is a list of `dot' patterns representing the actual data modules.
+;;; The position of all `pattern' objects is set in modules coordinates, not in pixels: the pixel
+;;; coordinates are only determined at rendering time.
+
+(defclass qr-code ()
+  ((version :initarg :version
+	    :initform (error "Must supply the version of the QR code."))
+   (error-correction-mode :initarg :ec-mode
+			  :accessor ec-mode
+			  :documentation "Error corresction mode must be one of :Q :L :M :H.")
+   (patterns :reader patterns
+	     :documentation "Fixed patterns defined by the QR code specifications: finder, etc.")
+   (modules :accessor modules
+	    :initform nil
+	    :documentation "Data modules that carry the actual data bits.")
+   (size :reader size
+	 :documentation "Number of modules on a side of the QR code.")
+   (step-move :accessor step-move
+	      :initform :side
+	      :documentation "When moving in the QR code to add data modules, the next move will be
+  this one. It can be either :side or :forward.")
+   (progress-direction :accessor progress-direction
+		       :initform :up
+		       :documentation "When moving in the QR code to add data modules, this is the
+  direction in which we progress. It can be either :up or :down.")
+   (filling-point :accessor filling-point
+		  :documentation "Point at which the next data module will be added.")
+   (grid :accessor grid
+	 :documentation "A representation of the QR code as an array. Bound by `write-data' once
+  the QR code has been filled, grid is used to compute penalties for masks.")
+   (mask :accessor mask
+	 :documentation "The mask applied on the QR code. This information is kept to fill the
+  format pattern.")))
+
+(defmethod initialize-instance :after ((object qr-code) &key)
+  (with-slots (size version filling-point patterns) object
+    (setf size (qr-code-size version))
+    (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
+    (setf patterns (add-located-patterns 'finder-pattern '(top-left top-right bottom-left) version))
+    (setf patterns
+	  (append patterns
+		  (add-alignment-patterns patterns version)
+		  (add-located-patterns 'separator '(top-left top-right bottom-left) version)
+		  (add-timing-patterns patterns size)
+		  (add-located-patterns 'dark-module '(bottom-left) version)
+		  (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
+		  (when (>= version 7)
+		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Classes to represent geometrical objects
+;;; 			     Classes to represent geometrical objects
+
+;;; Points represent positions, they have no dimensions
 
 (defclass point ()
   ((x :initarg :x
@@ -19,6 +68,9 @@
       :initform (error "Must provide the y coordinate.")
       :accessor y
       :documentation "The y coordinate of the point.")))
+
+;;; Squares are the basic shape making up patterns. Their position is designated by a `point'. They
+;;; have a color and a side, so that they may be rendered.
 
 (defclass square ()
   ((side :initarg :side
@@ -33,6 +85,7 @@
 	  :accessor color
 	  :documentation "COLOR can be any symbol, but only BLACK and WHITE have a meaning.")))
 
+;;; For convienience, this enables intialization from a list position instead of a `point'.
 (defmethod initialize-instance :after ((object square) &key)
   "When OBJECT is instantiated, if :POS is provided as a list make it a POINT before storing."
   (with-slots (position) object
@@ -40,6 +93,8 @@
       (destructuring-bind (x y) position
 	(setf position (make-instance 'point :x x :y y))))))
 
+;;; Many shapes can be described by concentric squares. This macro makes it easier to generate a
+;;; list of `square' objects representing a concentric shape. 
 (defmacro concentric-shape (&body specs)
   (let ((content)
 	(parent-pos 0)
@@ -56,13 +111,23 @@
       `(list ,@(dolist (spec specs (nreverse content))
 		 (push (spec->square spec) content))))))
 
+;;; Patterns contain shapes, but more importantly, they have a `position' and a `location'
+;;; slots. Location is abstract and refers to a position determined by the QR code specification: a
+;;; location may be bottom left, or top right. The position cannot be set when a `pattern' is
+;;; instantiated most of the time: it depends on the version of the `qr-code' containing the
+;;; `pattern'. Therefore it is the responsibility of the `qr-code' to call `set-location' when it
+;;; instantiates its patterns.
+;;; Some patterns'content may depend on their position: yhis is the case for separators for
+;;; instance. The `define-located-pattern' macro is responsible for defining the class of located
+;;; patterns, and generating the `set-location' methods.
+
 (defclass pattern ()
   ((content :initarg :content
 	    :accessor content
 	    :documentation "List of shapes that make up the pattern.")
    (position :initform (make-instance 'point :x 0 :y 0)
 	     :reader pos
-	     :documentation "Real coordinates in the geometrical space. Since it depends on
+	     :documentation "Real coordinates in the module space. Since it depends on
   the containing object's size, it should not be set manually. Instead, set the abstract `location'
   and let it set the position for you.")))
 
@@ -71,8 +136,8 @@
   PATTERN to the position corresponding to LOCATION-DESIGNATOR."))
 
 (defmacro define-located-pattern (class (&key (unique-content nil)) &body location-forms)
-  ;; Define a pattern called CLASS whit a series of LOCATION-FORMS. Each location form should be
-  ;; (location-designator (x-position y-position) &optional content-at-location-designator.
+  "Define a pattern called CLASS whit a series of LOCATION-FORMS. Each location form should be
+  (location-designator (x-position y-position) &optional content-at-location-designator)."
   (flet ((extract-locations (location-forms)
 	   (loop for (location (x-loc y-loc) &optional content-form) in location-forms
 	      collect location))
@@ -85,9 +150,9 @@
 	     (declare (ignore x-loc y-loc))
 	     (let ((content (or content-form unique-content)))
 	       (if content
-		      `((,location) (setf location location-designator
-					  content ,content))
-		      `((,location) (setf location location-designator)))))))
+		   `((,location) (setf location location-designator
+				       content ,content))
+		   `((,location) (setf location location-designator)))))))
     `(progn
 
        (defclass ,class (pattern)
@@ -97,18 +162,18 @@
   appropriate coordinates." (extract-locations location-forms)))))
        
        (defmethod set-location ((location-designator symbol) (object ,class) parent-version)
-	   (declare (ignore parent-version))
-	   (with-slots (content location) object
-	     (ecase location-designator
-	       ,@(loop for location-form in location-forms collect
-		      (form->position location-form)))))
+	 (declare (ignorable parent-version))
+	 (with-slots (content location) object
+	   (ecase location-designator
+	     ,@(loop for location-form in location-forms collect
+		    (form->position location-form)))))
        
        (defmethod set-location :after ((location-designator symbol) (object ,class) parent-version)
-	   (with-slots (location) object
-	     (set-position object
-			   (ecase location
-			     ,@(loop for location-form in location-forms collect
-				    (form->point location-form)))))))))
+		  (with-slots (location) object
+		    (set-position object
+				  (ecase location
+				    ,@(loop for location-form in location-forms collect
+					   (form->point location-form)))))))))
 
 (define-located-pattern separator ()
   (top-left (0 0)
@@ -136,7 +201,7 @@
   (top-right (8 (+ (* 4 (1- parent-version)) 13))
 	     (loop with x = 0 for y downfrom 7 to 0
 		collect (make-instance 'square :side 1 :pos (list x y))))
-  (bottom-left ((+ (* 4 (1- parent-version)) 13) 8)
+  (bottom-left ((+ (* 4 (1- parent-version)) 14) 8)
 	       (loop for x downfrom 6 to 0 with y = 0
 		  collect (make-instance 'square :side 1 :pos (list x y)))))
 
@@ -167,6 +232,9 @@
 	     (:side 3 :color white :pos :deduce)
 	     (:side 1 :color black :pos :deduce)))))
 
+;;; Timing patterns are defined by the alternance of black and white. The vertical one is treated
+;;; differently from the horizontal one, therefore we have two very similar classes.
+
 (defclass horizontal-timing-pattern (pattern)
   ((generator :reader generator
 	      :initform (lambda (parent-size)
@@ -182,6 +250,14 @@
 			      for color in (alexandria:circular-list 'black 'white)
 			      collect (make-instance 'square :pos (list x y)
 						     :color color :side 1))))))
+
+(define-located-pattern dark-module
+    (:unique-content (list (make-instance 'square :pos '(0 0) :side 1 :color 'black)))
+  (bottom-left ((+ (* 4 parent-version) 9) 8)))
+
+;;; The dot is a basic module used to represent the data held by the QR code. Since its color
+;;; varies, unlike the other patterns, it has a color clot. A specialized setter takes care of
+;;; updating the square in the dot, whenever the dot's colo changes
 
 (defclass dot (pattern)
   ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
@@ -199,44 +275,33 @@
     (setf color value
 	  (color (first content)) value)))
 
-(define-located-pattern dark-module
-    (:unique-content (list (make-instance 'square :pos '(0 0) :side 1 :color 'black)))
-  (bottom-left ((+ (* 4 parent-version) 9) 8)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defclass qr-code ()
-  ((version :initarg :version
-	    :initform (error "Must supply the version of the QR code."))
-   (patterns :initarg :patterns
-	     :reader patterns)
-   (modules :accessor modules
-	    :initform nil)
-   (size :reader size)
-   (step-move :accessor step-move
-		:initform :side)
-   (progress-direction :accessor progress-direction
-		       :initform :up)
-   (filling-point :accessor filling-point)
-   (grid :accessor grid)))
 
-(defmethod initialize-instance :after ((object qr-code) &key)
-  (with-slots (size version filling-point patterns) object
-    (setf size (qr-code-size version))
-    (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
-    (setf patterns (add-located-patterns 'finder-pattern '(top-left top-right bottom-left) version))
-    (setf patterns
-	  (append patterns
-		  (add-alignment-patterns patterns version)
-		  (add-located-patterns 'separator '(top-left top-right bottom-left) version)
-		  (add-timing-patterns patterns size)
-		  (add-located-patterns 'dark-module '(bottom-left) version)
-		  (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
-		  (when (>= version 7)
-		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; 					  Moving patterns
+
+;;; Whenever a pattern's location is set, its position can be determined and the pattern is
+;;; reponsible for moving the shapes in its content slot.
+
+(defgeneric set-position (object point &key relative)
+  (:documentation "Set the `position' of OBJECT to POINT. Since this often requires knowledge about
+  the containing object, it is not done manually but after the abstract `location' of OBJECT has
+  been set."))
+
+(defmethod set-position ((object pattern) point &key (relative t))
+  (let ((moving-func (if relative #'move-by #'move-to)))
+    (with-slots (content position) object
+      (funcall moving-func position point)
+      (loop for shape in content do
+	   (funcall moving-func shape point))
+      object)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Printing functions, to make object easier to inspect
+;;; 		       Printing functions, to make object easier to inspect
 
 (defmethod print-object ((object point) stream)
   (print-unreadable-object (object stream :type t)
@@ -263,7 +328,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Arithemtic operations on points
+;;; 				  Arithemtic operations on points
 
 (defgeneric add (point-a point-b)
   (:documentation "Vectorial sum of points."))
@@ -288,17 +353,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Moving and comparing shapes
+;;; 				    Moving and comparing shapes
 
 (defgeneric move-to (shape point)
   (:documentation "Sets the position of SHAPE to POINT"))
-
-(defgeneric move-by (shape point)
-  (:documentation "Shift SHAPE by an offset given by POINT"))
-
-(defgeneric overlap-p (object-1 object-2)
-  (:documentation "Compare the extents of OBJECT-1 and OBJECT-2 and return t if there is any
-  overlap."))
 
 (defmethod move-to ((shape point) (destination point))
   (with-slots (x y) destination
@@ -322,6 +380,9 @@
   "Moves SQUARE to the coordinates designated by POINT."
   (with-slots (position) shape
     (move-to position destination)))
+
+(defgeneric move-by (shape point)
+  (:documentation "Shift SHAPE by an offset given by POINT"))
 
 (defmethod move-by ((shape point) (offset point))
   (move-to shape (add shape offset)))
@@ -349,6 +410,10 @@ specialized on `point'."
 (defun between-values (x min max &key (test-min #'<=) (test-max #'<))
   (and (funcall test-min min x) (funcall test-max x max)))
 
+(defgeneric overlap-p (object-1 object-2)
+  (:documentation "Compare the extents of OBJECT-1 and OBJECT-2 and return t if there is any
+  overlap."))
+
 (defmethod overlap-p ((shape square) (point point))
   (destructuring-bind (xmin xmax ymin ymax) (extent shape)
     (and (between-values (x point) xmin xmax)
@@ -375,32 +440,34 @@ specialized on `point'."
 	(content object-1)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Moving patterns
-
-(defgeneric set-position (object point &key relative)
-  (:documentation "Set the `position' of OBJECT to POINT. Since this often requires knowledge about
-  the containing object, it is not done manually but after the abstract `location' of OBJECT has
-  been set."))
-
-(defmethod set-position ((object pattern) point &key (relative t))
-  (let ((moving-func (if relative #'move-by #'move-to)))
-    (with-slots (content position) object
-      (funcall moving-func position point)
-      (loop for shape in content do
-	   (funcall moving-func shape point))
-      object)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; 				   QR code buiding happens here
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; QR code buiding happens here
+(defun qr-code-size (version)
+  "Size, ie number of module on a side, of a QR code of version VERSION."
+  (+ (* 4 (1- version)) 21))
+
+(defun alignment-pattern-positions (version)
+  "All the possible positions for the centers of the alignment patterns, for a certain Qr code
+VERSION"
+  (let ((grid (aref *alignment-pattern-centers* (1- version))))
+    (alexandria:map-product #'list  grid grid)))
+
+
+;;; All located patterns, defined thanks to the `define-located-pattern' macro, can be instantiated
+;;; and placed correctly by the same function. All one needs to know is the list of the
+;;; locations. I'd rather put that in a class-acllocated slot, but it wouldn't be reachable before
+;;; instantiating. 
 
 (defun add-located-patterns (pattern-type locations version)
   (loop for location in locations
      for object = (make-instance pattern-type)
      do (set-location location object version)
      collect object))
+
+;;; Alignment patterns and timing patterns need their own function, since they are not located
+;;; patterns.
 
 (defun add-alignment-patterns (content version)
   (flet ((overlaps-with-finders (pattern)
@@ -429,7 +496,7 @@ specialized on `point'."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Rendering functions : to turn things into beautiful pixels
+;;; 		    Rendering functions : to turn things into beautiful pixels
 
 (defgeneric pixelize (object module-size &key canvas)
   (:documentation "Render OBJECT in pixels knowing that a module measures MODULE-SIZE pixels."))
@@ -476,6 +543,7 @@ specialized on `point'."
 	   (format out "~%")))))
 
 (defun print-to-png (qr-code module-size file)
+  "Saves QR-CODE to a png FILE after rendering, knowing that a module measures MODULE-SIZE pixels."
   (let* ((png-size (* (size qr-code) module-size))
 	 (px (make-array (* png-size png-size)
 			 :element-type '(unsigned-byte 8)
@@ -487,6 +555,8 @@ specialized on `point'."
 			     :height png-size
 			     :image-data px)))    
     (zpng:write-png png file)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun make-step (point move direction)
   (declare (ignorable direction))
