@@ -4,7 +4,10 @@
   :description "Describe qr-generator here"
   :author "William Woelffel"
   :license "GPLv3"
-  :depends-on (#:alexandria #:array-operations #:zpng)
+  :depends-on (#:alexandria
+	       #:array-operations
+	       #:zpng
+	       #:cl-slice)
   :serial t
   :components ((:file "package")
 	       (:file "qr-tables")
