@@ -166,9 +166,10 @@ to make it reach CAPACITY."
 
 (defun group-message (message property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
-    (let* ((block-info (gethash (list version error-correction-mode) *block-information*))
-	   (group1 (chunk message (* 8 (getf block-info :words-in-b1)))))
-      (append (list group1)
+    (let ((block-info (gethash (list version error-correction-mode) *block-information*)))
+      (append (list (chunk (subseq message 0 (* 8 (getf block-info :blocks-in-g1)
+						(getf block-info :words-in-b1)))
+			   (* 8 (getf block-info :words-in-b1))))
 	      (when (getf block-info :blocks-in-g2)
 		(list (chunk (subseq message (* 8 (getf block-info :blocks-in-g1)
 						(getf block-info :words-in-b1)))
@@ -182,10 +183,8 @@ to make it reach CAPACITY."
 
 (defun small-qr-code-p (property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
-    (destructuring-bind (blocks-in-grp1 words-in-block1 blocks-in-grp2 words-in-block2)
-	(assocval error-correction-mode (assocval version *block-information*))
-      (declare (ignore blocks-in-grp2 words-in-block1 words-in-block2))
-     (= 1 blocks-in-grp1))))
+    (let ((block-info (gethash (list version error-correction-mode) *block-information*)))
+      (= 1 (getf block-info :blocks-in-g1)))))
 
 (defun correction-codewords (chunked-polynomials property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
@@ -196,7 +195,8 @@ to make it reach CAPACITY."
 
 (defun interleave-blocks (groups)
   (let ((blocks (loop for group in groups append
-		     (loop for this-block in group collect this-block))))
+		     (loop for this-block in group collect
+			(reverse (coefs this-block))))))
     (loop for i below (reduce #'max blocks :key #'length)
        append (loop for this-block in blocks
 		collect (nth i this-block)) into result
@@ -210,32 +210,8 @@ to make it reach CAPACITY."
 		     (reverse (coefs poly))))))
    (if (small-qr-code-p property-list)
        (alexandria:flatten (append (reverse-poly) correction-codewords))
-       (append (interleave-blocks (reverse-poly))
+       (append (interleave-blocks chunked-polynomials)
 	      (interleave-blocks correction-codewords)))))
-
-;; (defparameter text "HELLO WOLRD")
-;; (defparameter level "M")
-;; (multiple-value-bind (msg plist) (string-to-message text level)
-;;   (let* ((chunked-poly
-;; 	  (chunks-to-polynomials (group-message msg plist))))
-;;     (format t "~a~%" chunked-poly)
-;;     ;; (structure-message chunked-poly
-;;     ;; 		       (correction-codewords chunked-poly plist)
-;;     ;; 		       plist)
-;;     ))
-;; (defvar test5 "0100001101010101010001101000011001010111001001100101010111000010011101110011001000000110000100100000011001100111001001101111011011110110010000100000011101110110100001101111001000000111001001100101011000010110110001101100011110010010000001101011011011100110111101110111011100110010000001110111011010000110010101110010011001010010000001101000011010010111001100100000011101000110111101110111011001010110110000100000011010010111001100101110000011101100000100011110110000010001111011000001000111101100")
-
-;; (let* ((msg test5)
-;;        (plist (list :version 5 :error-correction-mode :Q))
-;;        (chunked-poly
-;; 	(chunks-to-polynomials (group-message msg plist)))
-;;        (ec-words (correction-codewords chunked-poly plist)))
-;;   (format t "~a~%" chunked-poly)
-;;   (format t "~a~%" ec-words)
-;;   (structure-message chunked-poly
-;; 		     ec-words
-;; 		     plist))
-;; (print (string= "00100000010110110000101101111000110100010111001011011100010011010100001101000000111011000001000111101100" (string-to-message "HELLO WORLD" "Q")))
 
 (defun binarize-integers (interleaved-data)
   (format nil "~{~8,'0b~}" interleaved-data))
