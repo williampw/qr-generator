@@ -2,7 +2,7 @@
 
 (defclass polynomial ()
   ((coefs :initarg :coefs
-	       :reader coefs)
+	  :reader coefs)
    (degree :accessor degree
 	   :documentation "This is updated automatically and should not be manually set.")))
 
@@ -35,7 +35,7 @@
   (flet ((merge-lists (l1 l2)
 	   (loop for a in l1
 	      for b in l2
-	      append (list b a)))
+	      nconc (list b a)))
 	 (exponents (degree)
 	   (loop for i upto degree collect i)))
    (print-unreadable-object (poly stream :type t)
@@ -125,3 +125,14 @@
        finally (return result)) 
   "Polynomials, in the Galois field, used as generators in the Reed-Solomon process.")
 
+(defun format-divide (format-polynomial)
+  "Generate the bits for the format pattern, based on an odd division."
+  (loop with base-generator = (make-instance 'polynomial :coefs '(1 1 1 0 1 1 0 0 1 0 1))
+     for format-poly = (multiply (x-power-n 10) format-polynomial) then result
+     for generator-poly = (multiply (x-power-n (- (degree format-poly)
+						  (degree base-generator)))
+				    base-generator )
+     for result = (add format-poly generator-poly)
+     do (print format-poly)
+     while (> (degree format-poly) 10)
+     finally (return result)))
