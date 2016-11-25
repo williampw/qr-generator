@@ -185,11 +185,19 @@
 
 (defclass dot (pattern)
   ((content :initform (list (make-instance 'square :side 1 :pos '(0 0) :color 'unknown)))
-   (color :initarg :color)))
+   (color :initarg :color
+	  :reader color)))
 
 (defmethod initialize-instance :after ((object dot) &key)
   (with-slots (content color position) object
     (setf (color (first content)) color)))
+
+(defgeneric (setf color) (value object))
+
+(defmethod (setf color) (value (object dot))
+  (with-slots (content color) object
+    (setf color value
+	  (color (first content)) value)))
 
 (define-located-pattern dark-module
     (:unique-content (list (make-instance 'square :pos '(0 0) :side 1 :color 'black)))
@@ -207,7 +215,8 @@
 		:initform :side)
    (progress-direction :accessor progress-direction
 		       :initform :up)
-   (filling-point :accessor filling-point)))
+   (filling-point :accessor filling-point)
+   (grid :accessor grid)))
 
 (defmethod initialize-instance :after ((object qr-code) &key)
   (with-slots (size version filling-point patterns) object
@@ -223,6 +232,7 @@
 		  (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
 		  (when (>= version 7)
 		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -551,18 +561,50 @@ specialized on `point'."
     (push data-module (modules qr-code)))
   (progress qr-code))
 
+(defun write-data (qr-code bit-string)
+  (dolist (bit (mapcar #'parse-integer (chunk bit-string 1)))
+    (write-module qr-code bit))
+  (setf (grid qq) (pixelize qq 1)))
+
 (defparameter *masks*
-  (list (lambda (row col) (evenp (+ row col)))
-	(lambda (row col) (declare (ignorable col)) (evenp row))
-	(lambda (row col) (declare (ignore row)) (zerop (mod col 3)))
-	(lambda (row col) (zerop (mod (+ row col) 3)))
-	(lambda (row col) (evenp (+ (floor row 2) (floor col 3))))
-	(lambda (row col) (zerop (+ (mod (* row col) 2)
-				    (mod (* row col) 3))))
-	(lambda (row col) (evenp (+ (mod (* row col) 2)
-				    (mod (* row col) 3))))
-	(lambda (row col) (evenp (+ (mod (+ row col) 2)
-				    (mod (* row col) 3))))))
+  (list (lambda (point) (evenp (+ (x point) (y point))))
+	(lambda (point) (evenp (x point)))
+	(lambda (point) (zerop (mod (y point) 3)))
+	(lambda (point) (zerop (mod (+ (x point) (y point)) 3)))
+	(lambda (point) (evenp (+ (floor (x point) 2) (floor (y point) 3))))
+	(lambda (point) (zerop (+ (mod (* (x point) (y point)) 2)
+				  (mod (* (x point) (y point)) 3))))
+	(lambda (point) (evenp (+ (mod (* (x point) (y point)) 2)
+				  (mod (* (x point) (y point)) 3))))
+	(lambda (point) (evenp (+ (mod (+ (x point) (y point)) 2)
+				  (mod (* (x point) (y point)) 3))))))
+
+(defun flip-color (module)
+  (setf (color module) (opposite-color (color module))))
+
+(defun opposite-color (color)
+  (if (eql color 'white) 'black 'white))
+
+(defun apply-mask (qr-code mask)
+  (loop with grid-copy = (alexandria:copy-array (grid qr-code))
+     for module in (modules qr-code)
+     for module-pos = (pos module)
+     for module-color = (color module)
+     do (when (funcall mask module-pos)
+	  (setf (aref grid-copy (x module-pos) (y module-pos))
+		(color-value (opposite-color module-color))))
+     finally (return grid-copy)))
+
+(defun find-right-mask (qr-code)
+  (let ((mask-scores (mapcar (lambda (mask) (penalty (apply-mask qr-code mask))) *masks*)))
+    (nth (position (apply #'min mask-scores) mask-scores)
+	 *masks*)))
+
+(defun enforce-mask (qr-code mask)
+  (dolist (module (modules qr-code))
+    (when (funcall mask (pos module))
+      (flip-color module)))
+  (setf (grid qq) (pixelize qq 1)))
 
 (defun match-pattern (array pattern)
   "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal list."
