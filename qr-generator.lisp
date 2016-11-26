@@ -227,20 +227,21 @@ to make it reach CAPACITY."
 	   (structured-data (structure-message chunked-poly
 					       ec-words
 					       property-list)))
-      (complete-with-remainder (binarize-integers structured-data)
-			       (getf property-list :version)))))
+      (values (complete-with-remainder (binarize-integers structured-data)
+				       (getf property-list :version))
+	      property-list))))
 
-(defun format-string (error-correction-mode mask)
-  (let* ((ec-integer (getf (list :M 0 :L 1 :H 2 :Q 3) error-correction-mode))
-	 (format-string (format nil "~2,'0b~3,'0b" ec-integer mask))
-	 (format-poly (make-instance 'polynomial
-				     :coefs (nreverse (mapcar #'parse-integer
-							      (chunk format-string 1)))))
-	 (ec-poly (format-divide format-poly))
-	 (combined (make-instance 'polynomial
-				  :coefs (append (coefs ec-poly) (coefs format-poly))))
-	 (xored (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))
-    (format nil "~{~d~}" (reverse (coefs xored)))))
+;; (defun format-string (error-correction-mode mask)
+;;   (let* ((ec-integer (getf (list :M 0 :L 1 :H 2 :Q 3) error-correction-mode))
+;; 	 (format-string (format nil "~2,'0b~3,'0b" ec-integer mask))
+;; 	 (format-poly (make-instance 'polynomial
+;; 				     :coefs (nreverse (mapcar #'parse-integer
+;; 							      (chunk format-string 1)))))
+;; 	 (ec-poly (format-divide format-poly))
+;; 	 (combined (make-instance 'polynomial
+;; 				  :coefs (append (coefs ec-poly) (coefs format-poly))))
+;; 	 (xored (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))
+;;     (format nil "~{~d~}" (reverse (coefs xored)))))
 
 ;; (defun list-of-bits (integer length)
 ;;   "Taken from Zach Bean"

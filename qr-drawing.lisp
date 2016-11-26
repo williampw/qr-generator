@@ -544,17 +544,30 @@ VERSION"
 
 (defun print-to-png (qr-code module-size file)
   "Saves QR-CODE to a png FILE after rendering, knowing that a module measures MODULE-SIZE pixels."
-  (let* ((png-size (* (size qr-code) module-size))
-	 (px (make-array (* png-size png-size)
+  (let* ((png-size (* (+ 8 (size qr-code)) module-size))
+	 (px (make-array (list png-size png-size)
 			 :element-type '(unsigned-byte 8)
-			 :initial-contents (array-operations:flatten
-					    (pixelize qr-code module-size))))
-	 (png (make-instance 'zpng:png
-			     :color-type :grayscale
-			     :width png-size
-			     :height png-size
-			     :image-data px)))    
-    (zpng:write-png png file)))
+			 :initial-element 255))
+	 (qr-zone (cl-slice:slice px
+				  (cons (* 4 module-size) (- png-size (* 4 module-size)))
+				  (cons (* 4 module-size) (- png-size (* 4 module-size))))))
+    (print (array-dimensions px))
+    (print (array-dimensions qr-zone))
+    (setf (cl-slice:slice px
+			  (cons (* 4 module-size) (- png-size (* 4 module-size)))
+			  (cons (* 4 module-size) (- png-size (* 4 module-size))))
+	  (pixelize qr-code module-size :canvas qr-zone))
+    ;; (setf (zpng:image-data png) (make-array (* png-size png-size)
+    ;; 					    :initial-contents (array-operations:flatten px)))
+    (zpng:write-png (make-instance 'zpng:png
+				   :color-type :grayscale
+				   :width png-size
+				   :height png-size
+				   :image-data (make-array (* png-size png-size)
+							   :initial-contents
+							   (array-operations:flatten px)
+							   :element-type '(unsigned-byte 8)))
+		    file)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -756,22 +769,36 @@ are the  same as in the first cell."
   (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
 
 (defun fill-format-pattern (format-pattern format-string)
-  (let ((bits (mapcar #'parse-integer (chunk format-string 1))))
-    (ecase (location format-pattern)
-      ((top-left top-right)
-       (loop for module in (content format-pattern)
-	  for bit in bits
-	  do (setf (color module) (if (zerop bit) 'white 'black))))
-      ((bottom-left)
-       (loop for module in (content format-pattern)
-	  for bit in (subseq bits 8)
-	    do (setf (color module) (if (zerop bit) 'white 'black)))))))
+  (ecase (location format-pattern)
+    ((top-left top-right)
+     (loop for module in (content format-pattern)
+	for bit across format-string
+	do (setf (color module) (if (zerop bit) 'white 'black))))
+    ((bottom-left)
+     (loop for module in (content format-pattern)
+	for bit across (subseq format-string 8)
+	do (setf (color module) (if (zerop bit) 'white 'black))))))
 
 (defun fill-format-patterns (qr-code)
   (with-slots (mask error-correction-mode) qr-code
-    (let ((format-string "010111011011010";; (format-string error-correction-mode mask)
-			 )
+    (let ((format-string (gethash (list error-correction-mode mask) *format-strings*))
 	  (format-patterns (remove-if-not (lambda (obj) (eql (type-of obj) 'format-pattern))
 					  (patterns qr-code))))
       (dolist (fp format-patterns)
 	(fill-format-pattern fp (reverse format-string))))))
+
+(defun fill-version-patterns (qr-code)
+  (with-slots (version patterns) qr-code
+    (when (>= version 7)
+      (let ((version-string (aref *version-strings* (- version 7)))
+	    (version-patterns (remove-if-not (lambda (obj) (eql (type-of obj) 'version-pattern))
+					     patterns)))
+	(dolist (vp version-patterns)
+	  (loop for module in (content vp)
+	     for bit across (reverse version-string)
+	     do (setf (color module) (if (zerop bit) 'white 'black))))))))
+
+(defun finalize (qr-code)
+  (enforce-mask qr-code (find-right-mask qr-code))
+  (fill-format-patterns qr-code)
+  (fill-version-patterns qr-code))
