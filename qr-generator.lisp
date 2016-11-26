@@ -238,5 +238,17 @@ to make it reach CAPACITY."
 							      (chunk format-string 1)))))
 	 (ec-poly (format-divide format-poly))
 	 (combined (make-instance 'polynomial
-				  :coefs (append (coefs ec-poly) (coefs format-poly)))))
-    (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))
+				  :coefs (append (coefs ec-poly) (coefs format-poly))))
+	 (xored (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))
+    (format nil "~{~d~}" (reverse (coefs xored)))))
+
+;; (defun list-of-bits (integer length)
+;;   "Taken from Zach Bean"
+;;   (let ((bits '()))
+;;     (dotimes (index (max length (integer-length integer)) bits)
+;;       (push (if (logbitp index integer) 1 0) bits))))
+
+;; (defun format-string (ec-mode mask)
+;;   (let ((coefs (append (list-of-bits (getf (list :M 0 :L 1 :H 2 :Q 3) ec-mode) 2)
+;; 		       (list-of-bits mask 3)))
+;; 	)))

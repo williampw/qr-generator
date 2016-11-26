@@ -196,13 +196,13 @@
   (top-left (0 0)
 	    (append (loop for x below 9 with y = 8 unless (= x 6)
 		       collect (make-instance 'square :side 1 :pos (list x y)))
-		    (loop for y downfrom 8 to 0 with x = 8 unless (= y 6)
+		    (loop for y downfrom 7 to 0 with x = 8 unless (= y 6)
 		       collect (make-instance 'square :side 1 :pos (list x y)))))
   (top-right (8 (+ (* 4 (1- parent-version)) 13))
 	     (loop with x = 0 for y downfrom 7 to 0
 		collect (make-instance 'square :side 1 :pos (list x y))))
   (bottom-left ((+ (* 4 (1- parent-version)) 14) 8)
-	       (loop for x downfrom 6 to 0 with y = 0
+	       (loop for x upfrom 0 to 6 with y = 0
 		  collect (make-instance 'square :side 1 :pos (list x y)))))
 
 (define-located-pattern version-pattern ()
@@ -626,7 +626,7 @@ VERSION"
   ((text :initform "Below the lower limit or above the upper limit of the QR code")))
 
 (defun write-module (qr-code bit)
-  (let ((data-module (make-instance 'dot :color (if (zerop bit) 'black 'white))))
+  (let ((data-module (make-instance 'dot :color (if (zerop bit) 'white 'black))))
     (set-position data-module (filling-point qr-code) :relative nil)
     (push data-module (modules qr-code)))
   (progress qr-code))
@@ -667,12 +667,12 @@ VERSION"
 
 (defun find-right-mask (qr-code)
   (let ((mask-scores (mapcar (lambda (mask) (penalty (apply-mask qr-code mask))) *masks*)))
-    (nth (position (apply #'min mask-scores) mask-scores)
-	 *masks*)))
+    (position (apply #'min mask-scores) mask-scores)))
 
 (defun enforce-mask (qr-code mask)
+  (setf (mask qr-code) mask)
   (dolist (module (modules qr-code))
-    (when (funcall mask (pos module))
+    (when (funcall (nth mask *masks*) (pos module))
       (flip-color module)))
   (setf (grid qq) (pixelize qq 1)))
 
@@ -761,12 +761,17 @@ are the  same as in the first cell."
       ((top-left top-right)
        (loop for module in (content format-pattern)
 	  for bit in bits
-	  do (setf (color module) (if (zerop bit) 'black 'white)))))))
+	  do (setf (color module) (if (zerop bit) 'white 'black))))
+      ((bottom-left)
+       (loop for module in (content format-pattern)
+	  for bit in (subseq bits 8)
+	    do (setf (color module) (if (zerop bit) 'white 'black)))))))
 
 (defun fill-format-patterns (qr-code)
   (with-slots (mask error-correction-mode) qr-code
-    (let ((format-string (format-string error-correction-mode mask))
+    (let ((format-string "010111011011010";; (format-string error-correction-mode mask)
+			 )
 	  (format-patterns (remove-if-not (lambda (obj) (eql (type-of obj) 'format-pattern))
 					  (patterns qr-code))))
       (dolist (fp format-patterns)
-	(fill-format-pattern fp format-string)))))
+	(fill-format-pattern fp (reverse format-string))))))
