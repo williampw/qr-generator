@@ -557,8 +557,6 @@ VERSION"
 			  (cons (* 4 module-size) (- png-size (* 4 module-size)))
 			  (cons (* 4 module-size) (- png-size (* 4 module-size))))
 	  (pixelize qr-code module-size :canvas qr-zone))
-    ;; (setf (zpng:image-data png) (make-array (* png-size png-size)
-    ;; 					    :initial-contents (array-operations:flatten px)))
     (zpng:write-png (make-instance 'zpng:png
 				   :color-type :grayscale
 				   :width png-size
@@ -645,7 +643,7 @@ VERSION"
   (progress qr-code))
 
 (defun write-data (qr-code bit-string)
-  (dolist (bit (mapcar #'parse-integer (chunk bit-string 1)))
+  (dolist (bit (map 'list #'parse-integer bit-string))
     (write-module qr-code bit))
   (setf (grid qq) (pixelize qq 1)))
 
