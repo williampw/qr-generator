@@ -18,7 +18,7 @@
       (when (or seen-nonzero (not (zerop number)))
 	(setf seen-nonzero t)
 	(push number result)))
-    result))
+    (or result '(0))))
 
 (defgeneric (setf coefs) (value poly))
 
@@ -65,16 +65,19 @@
   (flet ((pad-polynomial (short-poly to-degree)
 	   (append (coefs short-poly)
 		   (loop repeat (- to-degree (degree short-poly))
-			collect 0))))
-    (let ((short-poly (if (<= (degree poly-1) (degree poly-2))
-			  poly-1
-			  poly-2))
-	  (long-poly (if (> (degree poly-1) (degree poly-2))
-			 poly-1
-			 poly-2)))
+		      collect 0))))
+    (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
       (make-instance 'polynomial
 		     :coefs (mapcar #'galois-add (coefs long-poly)
-					 (pad-polynomial short-poly (degree long-poly)))))))
+				    (pad-polynomial short-poly (degree long-poly)))))))
+
+(defun shift-degree (poly degree-shift)
+  "DESCTRUCTIVELY shift the polynomial's degree"
+  (unless (zerop degree-shift)
+    (setf (coefs poly)
+	  (append (loop repeat degree-shift collect 0)
+		  (coefs poly))))
+  poly)
 
 (defgeneric multiply (poly-1 poly-2)
   (:documentation "Multiplication of two polynomials in the Galois field. The second one may be an integer."))
@@ -87,30 +90,29 @@
 
 
 (defmethod multiply ((poly-1 polynomial) (poly-2 polynomial))
-  (flet ((shift-degree (poly degree-shift)
-	   (unless (zerop degree-shift)
-	     (setf (coefs poly)
-		   (append (loop repeat degree-shift collect 0)
-			   (coefs poly))))
-	   poly))
-    (loop for coef in (coefs poly-1)
-       for degree-shift upfrom 0
-       collect (shift-degree (multiply poly-2 coef) degree-shift) into intermediate-products
-       finally (return (reduce #'add intermediate-products)))))
+  (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
+   (loop for coef in (coefs short-poly)
+      for degree-shift upfrom 0
+      collect (shift-degree (multiply long-poly coef) degree-shift) into intermediate-products
+      finally (return (reduce #'add intermediate-products)))))
+
+;; (defmethod multiply ((poly-1 polynomial) (poly-2 polynomial))
+;;   (let ((degree-shifts (alexandria:iota (1+ (degree poly-1)))))
+;;     (reduce #'add (mapcar (lambda (coef degree-shift)
+;; 			    (shift-degree (multiply poly-2 coef) degree-shift))
+;; 			  (coefs poly-1)
+;; 			  degree-shifts))))
 
 (defgeneric divide (poly-1 poly-2))
 
 (defmethod divide ((poly-1 polynomial) (poly-2 polynomial))
-  (let ((dividend (if (> (degree poly-1) (degree poly-2))
-		      poly-1
-		      poly-2))
-	(divisor (if (> (degree poly-1) (degree poly-2))
-		     poly-2
-		     poly-1)))
+  (destructuring-bind (divisor dividend) (sort (list poly-1 poly-2) #'<= :key #'degree)
     (loop 
        for loop-dividend = dividend then (add loop-dividend intermediate-product)
        for loop-divisor = (multiply divisor (x-power-n (- (degree dividend) (degree divisor))))
-       then (setf (coefs loop-divisor) (rest (coefs loop-divisor)))
+       then (setf (coefs loop-divisor) (subseq (coefs loop-divisor)
+					       (- (degree loop-divisor)
+						  (degree loop-dividend))))
        for intermediate-product = (multiply loop-divisor (alexandria:last-elt (coefs loop-dividend)))
        while (>= (degree loop-dividend) (degree divisor))
        finally (return loop-dividend))))
@@ -120,9 +122,9 @@
      for counter upfrom 0
      for i across (subseq *log-antilog* 0 36)
      for pol = (make-instance 'polynomial :coefs '(1 1))
-       then (multiply pol (make-instance 'polynomial :coefs (list i 1)))
+     then (multiply pol (make-instance 'polynomial :coefs (list i 1)))
      do (setf (aref result counter) pol)
-       finally (return result)) 
+     finally (return result)) 
   "Polynomials, in the Galois field, used as generators in the Reed-Solomon process.")
 
 (defun format-divide (format-polynomial)
