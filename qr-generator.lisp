@@ -122,7 +122,7 @@ CHUNK-SIZE. Returns the list of subsequences."
       (vec-concatenate (mapcar #'represent-substring substrings)))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :byte-mode)))
-  (vec-concatenate (mapcar #'bits (map 'list #'char-code data))))
+  (vec-concatenate (mapcar (lambda (int) (bits int 8)) (map 'list #'char-code data))))
 
 (defun string-to-message (string correction-level)
   (let* ((length (length string))
@@ -150,19 +150,19 @@ CHUNK-SIZE. Returns the list of subsequences."
 	     :total-codewords)))
 
 (defun terminator (string-length capacity)
-  "Terminator string that should be added at the end of an encoded string whose length is 
+  "Terminator bits that should be added at the end of an encoded string whose length is 
 STRING-LENGTH to try and reach CAPACITY."
   (when (< string-length capacity)
       (bits 0 (min 4 (- capacity string-length)))))
 
 (defun padding-to-multiple-of-eight (string-length)
-  "Padding string that should be added at the end of a terminated string whose length is 
+  "Padding bits  that should be added at the end of a terminated string whose length is 
 STRING-LENGTH to make its length a multiple of 8."
   (unless (zerop (rem string-length 8))
     (bits 0 (- 8 (rem string-length 8)))))
 
 (defun filling-to-capacity (string-length capacity)
-  "Filling string that should be added at the end of a padded string whose length is STRING-LENGTH 
+  "Filling bits that should be added at the end of a padded string whose length is STRING-LENGTH 
 to make it reach CAPACITY."
   (let ((filling-bytes (alexandria:circular-list (bits 236 8)
 						 (bits 17 8)))
@@ -226,11 +226,11 @@ to make it reach CAPACITY."
   (flet ((reverse-poly ()
 	   (loop for group in chunked-polynomials collect
 		(loop for poly in group collect
-		     (reverse (coefs poly))))))
+		     (coerce (reverse (coefs poly)) 'list)))))
    (if (small-qr-code-p property-list)
        (alexandria:flatten (concatenate 'list
 					(reverse-poly)
-					(reverse (coefs (first (first correction-codewords))))))
+					(reverse (coefs (caar correction-codewords)))))
        (concatenate 'list  (interleave-blocks chunked-polynomials)
 		    (interleave-blocks correction-codewords)))))
 
@@ -276,3 +276,11 @@ to make it reach CAPACITY."
 ;; 		       (list-of-bits mask 3)))
 ;; 	)))
 
+(defun make-qr-code (text &optional (ec-mode "L"))
+  (multiple-value-bind (bits property-list) (text-to-binary text ec-mode)
+    (let ((qr-code (make-instance 'qr-code
+				  :version (getf property-list :version)
+				  :ec-mode (getf property-list :error-correction-mode))))
+      (write-data qr-code bits)
+      (finalize qr-code)
+      qr-code)))

@@ -642,129 +642,10 @@ VERSION"
     (push data-module (modules qr-code)))
   (progress qr-code))
 
-(defun write-data (qr-code bit-string)
-  (dolist (bit (map 'list (alexandria:compose #'parse-integer #'string) bit-string))
-    (write-module qr-code bit))
-  (setf (grid qq) (pixelize qq 1)))
-
-(defparameter *masks*
-  (list (lambda (point) (evenp (+ (x point) (y point))))
-	(lambda (point) (evenp (x point)))
-	(lambda (point) (zerop (mod (y point) 3)))
-	(lambda (point) (zerop (mod (+ (x point) (y point)) 3)))
-	(lambda (point) (evenp (+ (floor (x point) 2) (floor (y point) 3))))
-	(lambda (point) (zerop (+ (mod (* (x point) (y point)) 2)
-				  (mod (* (x point) (y point)) 3))))
-	(lambda (point) (evenp (+ (mod (* (x point) (y point)) 2)
-				  (mod (* (x point) (y point)) 3))))
-	(lambda (point) (evenp (+ (mod (+ (x point) (y point)) 2)
-				  (mod (* (x point) (y point)) 3))))))
-
-(defun flip-color (module)
-  (setf (color module) (opposite-color (color module))))
-
-(defun opposite-color (color)
-  (if (eql color 'white) 'black 'white))
-
-(defun apply-mask (qr-code mask)
-  (loop with grid-copy = (alexandria:copy-array (grid qr-code))
-     for module in (modules qr-code)
-     for module-pos = (pos module)
-     for module-color = (color module)
-     do (when (funcall mask module-pos)
-	  (setf (aref grid-copy (x module-pos) (y module-pos))
-		(color-value (opposite-color module-color))))
-     finally (return grid-copy)))
-
-(defun find-right-mask (qr-code)
-  (let ((mask-scores (mapcar (lambda (mask) (penalty (apply-mask qr-code mask))) *masks*)))
-    (position (apply #'min mask-scores) mask-scores)))
-
-(defun enforce-mask (qr-code mask)
-  (setf (mask qr-code) mask)
-  (dolist (module (modules qr-code))
-    (when (funcall (nth mask *masks*) (pos module))
-      (flip-color module)))
-  (setf (grid qq) (pixelize qq 1)))
-
-(defun match-pattern (array pattern)
-  "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal list."
-  (let* ((height (length pattern))
-	 (width (length (first pattern)))
-	 (pattern-array (make-array (list height width)
-				    :initial-contents pattern)))
-    (destructuring-bind (nrows ncols) (array-dimensions array)
-      (loop for row upto(- nrows height) sum
-	   (loop for col upto (- ncols width)
-		for row-end = (if (< (+ row height) nrows) (+ row height))
-		for col-end = (if (< (+ col width) ncols) (+ col width))
-	      count (equalp pattern-array
-			    (cl-slice:slice array
-					    (cons row row-end)
-					    (cons col col-end))))))))
-
-(defun greedy-contiguous (array start-row start-col)
-  "Progresses in ARRAY from starting coordinates START-ROW & START-COL as long as the values read
-are the  same as in the first cell."
-  (destructuring-bind (nrows ncols) (array-dimensions array)
-    (declare (ignore nrows))
-    (loop for col upfrom start-col below ncols
-       for value = (aref array start-row col)
-       with seeked-value = (aref array start-row start-col)
-       while (= seeked-value value)
-       count 1)))
-
-(defun score-contiguous (n-contig-cells)
-  "Returns the penalty score of N-CONTIG-CELLS contiguous cells with same value."
-  (if (< n-contig-cells 5)
-      0
-      (+ 3 (- n-contig-cells 5))))
-
-(defun count-contiguous (array)
-  (destructuring-bind (nrows ncols) (array-dimensions array)
-    (loop for row upfrom 0 below nrows sum
-	 (do ((col 0 (+ col (greedy-contiguous array row col)))
-	      (contig-score 0))
-	     ((>= col ncols) contig-score)
-	   (incf contig-score
-		 (score-contiguous (greedy-contiguous array row col)))))))
-
-(defun penalty-1 (array)
-  (+ (count-contiguous array) (count-contiguous (transpose array))))
-
-(defun penalty-2 (array)
-  (* 3
-     (+ (match-pattern array '((0 0) (0 0)))
-	(match-pattern array '((255 255) (255 255))))))
-
-(defun transpose (array)
-  (array-operations:permute '(1 0) array))
-
-(defun penalty-3 (array)
-  (let* ((base-pattern '(255 0 255 255 255 0 255 0 0 0 0))
-	 (pattern (list base-pattern))
-	 (anti-pattern (list (reverse base-pattern))))
-    (* 40
-       (+ (match-pattern array pattern)
-	  (match-pattern array anti-pattern)
-	  (match-pattern (transpose array) pattern)
-	  (match-pattern (transpose array) anti-pattern)))))
-
-(defun count-array (array item)
-  (count item (array-operations:flatten array)))
-
-(defun penalty-4 (array)
-  (let* ((dark-modules (count-array array 0))
-	 (total-modules (apply #'* (array-dimensions array)))
-	 (dark-percentage (* 100 (/ dark-modules total-modules)))
-	 (sub-multiple (* 5 (floor dark-percentage 5)))
-	 (sup-multiple (+ 5 sub-multiple))
-	 (final-values (list (/ (abs (- sub-multiple 50)) 5)
-			     (/ (abs (- sup-multiple 50)) 5))))
-    (reduce #'min final-values :key (lambda (x) (* 10 x)))))
-
-(defun penalty (array)
-  (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
+(defun write-data (qr-code bits)
+  (loop for bit across bits
+     do (write-module qr-code bit))
+  (setf (grid qr-code) (pixelize qr-code 1)))
 
 (defun fill-format-pattern (format-pattern format-string)
   (ecase (location format-pattern)
@@ -791,12 +672,12 @@ are the  same as in the first cell."
       (let ((version-string (aref *version-strings* (- version 7)))
 	    (version-patterns (remove-if-not (lambda (obj) (eql (type-of obj) 'version-pattern))
 					     patterns)))
-	(dolist (vp version-patterns)
+	(dolist (vp version-patterns)	  
 	  (loop for module in (content vp)
 	     for bit across (reverse version-string)
 	     do (setf (color module) (if (zerop bit) 'white 'black))))))))
 
 (defun finalize (qr-code)
-  (enforce-mask qr-code (find-right-mask qr-code))
+  (enforce-mask qr-code (find-best-mask qr-code))
   (fill-format-patterns qr-code)
   (fill-version-patterns qr-code))

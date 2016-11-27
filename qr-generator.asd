@@ -13,8 +13,9 @@
 	       #:cl-slice)
   :serial t
   :components ((:file "package")
-	       (:file "qr-tables")
+	       (:file "tables")
 	       (:file "polynomials")
+	       (:file "masks")
                (:file "qr-generator")
 	       (:file "qr-drawing")))
 
