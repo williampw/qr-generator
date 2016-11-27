@@ -5,6 +5,31 @@
 (defun assocval (item alist)
   (cdr (assoc item alist))) 
 
+(defun bits (integer &optional (length nil))
+  (unless length
+    (setf length (integer-length integer)))
+  (let ((result (make-array length :element-type 'bit :initial-element 0))
+	(pointer (1- length)))
+    (do ((i pointer (1- i))
+	 (index 0 (1+ index)))
+	((<= length index) result)
+      (when (logbitp index integer)
+	(setf (aref result i) 1)))))
+
+(defun from-bits (bit-array)
+  (loop for index downfrom (1- (length bit-array)) to 0
+     for value = 1 then (* 2 value)
+     unless (zerop (bit bit-array index))
+     sum value))
+
+(defun vec-concatenate (list-vectors)
+  (let* ((total-length (reduce #'+ (mapcar #'length list-vectors)))
+	 (result (make-array total-length :element-type 'bit :fill-pointer 0)))
+    (loop for vec in list-vectors do
+	 (loop for element across vec do
+	      (vector-push element result)))
+    result))
+
 (defun numeric-mode-p (char)
   (digit-char-p char))
 
@@ -26,11 +51,9 @@
 
 (defun choose-error-correction (level)
   (assert (= 1 (length level)))
-  (cond ((string-equal level "L") :L)
-	((string-equal level "M") :M)
-	((string-equal level "Q") :Q)
-	((string-equal level "H") :H)
-	(t (error "Unrecognized error correction level. Must be one of (L M Q H)"))))
+  (if (member level '("H" "L" "M" "Q") :test #'string=)
+      (intern level :keyword)
+      (error "Unrecognized error correction level. Must be one of (L M Q H)")))
 
 (defun analyze-text (input-text)
   "Reads an INPUT-TEXT string and returns a plist containg the suitable version and encoding mode.")
@@ -38,7 +61,7 @@
 (defun encoding-mode-indicator (encoding-mode)
   "Represents the encoding mode indicator on a 4-bit string."
   (let ((encoding-mode-indicator (assocval encoding-mode *encoding-mode-indicators*)))
-    (padded-binary encoding-mode-indicator 4)))
+    (bits encoding-mode-indicator 4)))
 
 (defun get-qr-version (string-length error-correction-mode encoding-mode)
   "Determines the suitable QR code version for a string whose length is STRING-LENGTH, given its
@@ -54,17 +77,16 @@ error correction-mode and encoding mode."
 	(encoding-mode (determine-encoding-mode string)))
     (get-qr-version length error-correction-mode encoding-mode)))
 
-(defun padded-binary (decimal-number width)
-  "Represents DECIMAL-NUMBER in binary, with a 0 padding to the left until WIDTH is reached."
-  (format nil "~v,'0b" width decimal-number))
+;; (defun padded-binary (decimal-number width)
+;;   "Represents DECIMAL-NUMBER in binary, with a 0 padding to the left until WIDTH is reached."
+;;   (format nil "~v,'0b" width decimal-number))
 
 (defun character-count-indicator-length (version encoding-mode)
   (let ((version-table (assocval version *count-indicator-length*)))
     (assocval encoding-mode version-table)))
 
 (defun character-count-indicator (string-length version encoding-mode)
-  (padded-binary string-length
-		 (character-count-indicator-length version encoding-mode)))
+  (bits string-length (character-count-indicator-length version encoding-mode)))
 
 (defun chunk (sequence chunk-size)
   "Split SEQUENCE into chunks of CHUNK-SIZE characters. The final block may be smaller than
@@ -84,23 +106,22 @@ CHUNK-SIZE. Returns the list of subsequences."
   (:documentation "Represent DATA as a string of binary numbers."))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
-  (format nil "~{~b~}" (mapcar #'parse-integer (chunk data 3))))
+  (vec-concatenate (mapcar (alexandria:compose #'bits #'parse-integer) (chunk data 3))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
   (flet ((represent-substring (substring)
 	   (ecase (length substring)
 	     ((1)
-	      (padded-binary (gethash (char substring 0) *alphanumeric-encoding*)
-			     6))
+	      (bits (gethash (char substring 0) *alphanumeric-encoding*) 6))
 	     ((2)
-	      (padded-binary (+ (* 45 (gethash (char substring 0) *alphanumeric-encoding*))
-				(gethash (char substring 1) *alphanumeric-encoding*))
-			     11)))))
+	      (bits (+ (* 45 (gethash (char substring 0) *alphanumeric-encoding*))
+		       (gethash (char substring 1) *alphanumeric-encoding*))
+		    11)))))
     (let ((substrings (chunk data 2)))
-      (format nil "~{~b~}" (mapcar #'represent-substring substrings)))))
+      (vec-concatenate (mapcar #'represent-substring substrings)))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :byte-mode)))
-  (format nil "~{~8,'0b~}" (map 'list #'char-code data)))
+  (vec-concatenate (mapcar #'bits (map 'list #'char-code data))))
 
 (defun string-to-message (string correction-level)
   (let* ((length (length string))
@@ -110,13 +131,16 @@ CHUNK-SIZE. Returns the list of subsequences."
 	 (capacity (qr-capacity version error-correction-mode))
 	 (mode-indicator (encoding-mode-indicator encoding-mode))
 	 (character-count-indic (character-count-indicator length version encoding-mode))
-	 (raw-data (concatenate 'string mode-indicator character-count-indic
-				(encode-data string encoding-mode)))
-	 (terminated-data (concatenate 'string raw-data (terminator (length raw-data) capacity)))
-	 (padded-data (concatenate 'string terminated-data
-				   (padding-to-multiple-of-eight (length terminated-data)))))
+	 (raw-data (vec-concatenate (list mode-indicator character-count-indic
+					  (encode-data string encoding-mode))))
+	 (data-length (length raw-data))
+	 (terminator (terminator data-length capacity))
+	 (data-length (+ data-length (length terminator)))
+	 (padding (padding-to-multiple-of-eight data-length))
+	 (data-length (+ data-length (length padding)))
+	 (final-filling (filling-to-capacity data-length capacity)))
     (values
-     (format nil "~a~a" padded-data (filling-to-capacity (length padded-data) capacity))
+     (vec-concatenate (list raw-data terminator padding final-filling))
      (list :version version :error-correction-mode error-correction-mode))))
 
 (defun qr-capacity (version error-correction-mode)
@@ -128,26 +152,25 @@ CHUNK-SIZE. Returns the list of subsequences."
   "Terminator string that should be added at the end of an encoded string whose length is 
 STRING-LENGTH to try and reach CAPACITY."
   (when (< string-length capacity)
-      (padded-binary 0 (min 4 (- capacity string-length)))))
+      (bits 0 (min 4 (- capacity string-length)))))
 
 (defun padding-to-multiple-of-eight (string-length)
   "Padding string that should be added at the end of a terminated string whose length is 
 STRING-LENGTH to make its length a multiple of 8."
   (unless (zerop (rem string-length 8))
-    (padded-binary 0 (- 8 (rem string-length 8)))))
+    (bits 0 (- 8 (rem string-length 8)))))
 
 (defun filling-to-capacity (string-length capacity)
   "Filling string that should be added at the end of a padded string whose length is STRING-LENGTH 
 to make it reach CAPACITY."
-  (let ((filling-bytes (alexandria:circular-list (padded-binary 236 8)
-						 (padded-binary 17 8)))
+  (let ((filling-bytes (alexandria:circular-list (bits 236 8)
+						 (bits 17 8)))
 	(bytes-to-fill (/ (- capacity string-length) 8)))
-    (format nil "~{~a~}" (subseq filling-bytes 0 bytes-to-fill))))
+    (vec-concatenate (subseq filling-bytes 0 bytes-to-fill))))
 
 
 (defun split-message-string (message)
-  (mapcar (lambda (x) (parse-integer x :radix 2))
-	  (chunk message 8)))
+  (mapcar #'from-bits (chunk message 8)))
 
 (defun message-polynomial (message)
   (make-instance 'polynomial :coefs (nreverse (split-message-string message))))
@@ -160,9 +183,6 @@ to make it reach CAPACITY."
 (defun reed-solomon (message-poly generator-poly)
   (divide (multiply message-poly (x-power-n (degree generator-poly)))
 	  generator-poly))
-
-(defun submessage-to-int (submessage)
-  (split-message-string submessage))
 
 (defun group-message (message property-list)
   (destructuring-bind (&key version error-correction-mode) property-list
@@ -253,3 +273,4 @@ to make it reach CAPACITY."
 ;;   (let ((coefs (append (list-of-bits (getf (list :M 0 :L 1 :H 2 :Q 3) ec-mode) 2)
 ;; 		       (list-of-bits mask 3)))
 ;; 	)))
+

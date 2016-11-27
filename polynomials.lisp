@@ -61,15 +61,21 @@
       0
       (nth-galois (mod (+ (galois-exponent a) (galois-exponent b)) 255))))
 
+;; (defmethod add (poly-1 poly-2)
+;;   (flet ((pad-polynomial (short-poly to-degree)
+;; 	   (append (coefs short-poly)
+;; 		   (loop repeat (- to-degree (degree short-poly))
+;; 		      collect 0))))
+;;     (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
+;;       (make-instance 'polynomial
+;; 		     :coefs (mapcar #'galois-add (coefs long-poly)
+;; 				    (pad-polynomial short-poly (degree long-poly)))))))
+
 (defmethod add (poly-1 poly-2)
-  (flet ((pad-polynomial (short-poly to-degree)
-	   (append (coefs short-poly)
-		   (loop repeat (- to-degree (degree short-poly))
-		      collect 0))))
-    (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
-      (make-instance 'polynomial
-		     :coefs (mapcar #'galois-add (coefs long-poly)
-				    (pad-polynomial short-poly (degree long-poly)))))))
+  (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
+    (make-instance 'polynomial
+		   :coefs (append (mapcar #'galois-add (coefs short-poly) (coefs long-poly))
+				  (subseq (coefs long-poly) (1+ (degree short-poly)))))))
 
 (defun shift-degree (poly degree-shift)
   "DESCTRUCTIVELY shift the polynomial's degree"

@@ -643,7 +643,7 @@ VERSION"
   (progress qr-code))
 
 (defun write-data (qr-code bit-string)
-  (dolist (bit (map 'list #'parse-integer bit-string))
+  (dolist (bit (map 'list (alexandria:compose #'parse-integer #'string) bit-string))
     (write-module qr-code bit))
   (setf (grid qq) (pixelize qq 1)))
 
