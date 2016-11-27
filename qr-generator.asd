@@ -17,7 +17,8 @@
 	       (:file "polynomials")
 	       (:file "masks")
                (:file "qr-generator")
-	       (:file "qr-drawing")))
+	       (:file "qr-drawing")
+	       (:file "main")))
 
 (defmethod perform ((o test-op)
                     (c (eql (find-system :qr-generator))))
