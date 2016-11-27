@@ -8,23 +8,40 @@
 
 (defmethod initialize-instance :after ((object polynomial) &key)
   (with-slots (coefs degree) object
-    (setf coefs (remove-trailing-zeros coefs))
-    (setf degree (1- (length coefs)))))
+    (multiple-value-bind (trimmed-coefs n-coefs) (remove-trailing-zeros coefs)
+      (setf coefs (make-array n-coefs :initial-contents trimmed-coefs))
+      (setf degree (1- n-coefs)))))
 
-(defun remove-trailing-zeros (list)
+(defgeneric remove-trailing-zeros (sequence)
+  (:documentation "Returns SEQUENCE without the trailing zeros."))
+
+(defmethod remove-trailing-zeros ((sequence list))
   (let ((result nil)
 	(seen-nonzero nil))
-    (dolist (number (reverse list))
+    (dolist (number (reverse sequence))
       (when (or seen-nonzero (not (zerop number)))
 	(setf seen-nonzero t)
 	(push number result)))
-    (or result '(0))))
+    (values (or result '(0))
+	    (max (length result) 1))))
+
+(defmethod remove-trailing-zeros ((sequence vector))
+  (loop with seen-nonzero = nil
+     for coef across (reverse sequence)
+     when (or seen-nonzero (not (zerop coef)))
+     count it into effective-length
+     and collect coef into result
+     and do (setf seen-nonzero t)
+     finally (return (values (make-array (max effective-length 1)
+					 :initial-contents (reverse (or result #(0))))
+			     (max effective-length 1)))))
 
 (defgeneric (setf coefs) (value poly))
 
 (defmethod (setf coefs) (value (poly polynomial))
-  (setf (slot-value poly 'coefs) (remove-trailing-zeros value))
-  (setf (degree poly) (1- (length value)))
+  (multiple-value-bind (trimmed-coefs n-coefs) (remove-trailing-zeros value)
+    (setf (slot-value poly 'coefs) (make-array n-coefs :initial-contents trimmed-coefs))
+    (setf (degree poly) (1- n-coefs)))
   poly)
 
 (defun x-power-n (n)
@@ -33,7 +50,7 @@
 
 (defmethod print-object ((poly polynomial) stream)
   (flet ((merge-lists (l1 l2)
-	   (loop for a in l1
+	   (loop for a across l1
 	      for b in l2
 	      nconc (list b a)))
 	 (exponents (degree)
@@ -74,15 +91,15 @@
 (defmethod add (poly-1 poly-2)
   (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
     (make-instance 'polynomial
-		   :coefs (append (mapcar #'galois-add (coefs short-poly) (coefs long-poly))
-				  (subseq (coefs long-poly) (1+ (degree short-poly)))))))
+		   :coefs (concatenate 'vector
+				       (map 'vector #'galois-add (coefs short-poly) (coefs long-poly))
+				       (subseq (coefs long-poly) (1+ (degree short-poly)))))))
 
 (defun shift-degree (poly degree-shift)
   "DESCTRUCTIVELY shift the polynomial's degree"
   (unless (zerop degree-shift)
     (setf (coefs poly)
-	  (append (loop repeat degree-shift collect 0)
-		  (coefs poly))))
+	  (concatenate 'vector (loop repeat degree-shift collect 0) (coefs poly))))
   poly)
 
 (defgeneric multiply (poly-1 poly-2)
@@ -92,12 +109,12 @@
   (with-slots (coefs) poly
     (make-instance
      'polynomial
-     :coefs (mapcar (lambda (x) (galois-product x constant)) coefs))))
+     :coefs (map 'vector (lambda (x) (galois-product x constant)) coefs))))
 
 
 (defmethod multiply ((poly-1 polynomial) (poly-2 polynomial))
   (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
-   (loop for coef in (coefs short-poly)
+   (loop for coef across (coefs short-poly)
       for degree-shift upfrom 0
       collect (shift-degree (multiply long-poly coef) degree-shift) into intermediate-products
       finally (return (reduce #'add intermediate-products)))))

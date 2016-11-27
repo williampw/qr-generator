@@ -219,7 +219,7 @@ to make it reach CAPACITY."
 			  (reverse (coefs this-block))))))
     (loop for i below (reduce #'max blocks :key #'length)
        append (loop for this-block in blocks
-		 collect (nth i this-block)) into result
+		 collect (when (< i (length this-block)) (aref this-block i))) into result
        finally (return (remove-if #'null result)))))
 
 (defun structure-message (chunked-polynomials correction-codewords property-list)
@@ -228,9 +228,11 @@ to make it reach CAPACITY."
 		(loop for poly in group collect
 		     (reverse (coefs poly))))))
    (if (small-qr-code-p property-list)
-       (alexandria:flatten (append (reverse-poly) (reverse (coefs (first (first correction-codewords))))))
-       (append (interleave-blocks chunked-polynomials)
-	       (interleave-blocks correction-codewords)))))
+       (alexandria:flatten (concatenate 'list
+					(reverse-poly)
+					(reverse (coefs (first (first correction-codewords))))))
+       (concatenate 'list  (interleave-blocks chunked-polynomials)
+		    (interleave-blocks correction-codewords)))))
 
 (defun binarize-integers (interleaved-data)
   (vec-concatenate (mapcar (lambda (int) (bits int 8)) interleaved-data)))
