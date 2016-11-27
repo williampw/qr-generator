@@ -25,7 +25,8 @@
 (defun vec-concatenate (list-vectors)
   (let* ((total-length (reduce #'+ (mapcar #'length list-vectors)))
 	 (result (make-array total-length :element-type 'bit :fill-pointer 0)))
-    (loop for vec in list-vectors do
+    (loop for vec in list-vectors
+       when vec do
 	 (loop for element across vec do
 	      (vector-push element result)))
     result))
@@ -232,12 +233,11 @@ to make it reach CAPACITY."
 	       (interleave-blocks correction-codewords)))))
 
 (defun binarize-integers (interleaved-data)
-  (format nil "~{~8,'0b~}" interleaved-data))
+  (vec-concatenate (mapcar (lambda (int) (bits int 8)) interleaved-data)))
 
-(defun complete-with-remainder (binary-data version)
-  (concatenate 'string binary-data
-	       (unless (zerop (aref *remainders* version))
-		 (padded-binary 0 (aref *remainders* version)))))
+(defun remainder (version)
+  (unless (zerop (aref *remainders* version))
+    (bits 0 (aref *remainders* version))))
 
 (defun text-to-binary (text correction-level)
   (multiple-value-bind (message property-list) (string-to-message text correction-level)
@@ -247,8 +247,8 @@ to make it reach CAPACITY."
 	   (structured-data (structure-message chunked-poly
 					       ec-words
 					       property-list)))
-      (values (complete-with-remainder (binarize-integers structured-data)
-				       (getf property-list :version))
+      (values (vec-concatenate (list (binarize-integers structured-data)
+				     (remainder (getf property-list :version))))
 	      property-list))))
 
 ;; (defun format-string (error-correction-mode mask)
