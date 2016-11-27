@@ -14,7 +14,7 @@
 	    :initform (error "Must supply the version of the QR code."))
    (error-correction-mode :initarg :ec-mode
 			  :accessor ec-mode
-			  :documentation "Error corresction mode must be one of :Q :L :M :H.")
+			  :documentation "Error correction mode must be one of :Q :L :M :H.")
    (patterns :reader patterns
 	     :documentation "Fixed patterns defined by the QR code specifications: finder, etc.")
    (modules :accessor modules
