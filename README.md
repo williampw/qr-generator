@@ -16,3 +16,5 @@ structural integrity, but just done by brute force and thousands of slaves. -- A
 ```
 
 More documentation as soon as possible.
+
+This program is base on the following [tutorial](http://www.thonky.com/qr-code-tutorial/).
