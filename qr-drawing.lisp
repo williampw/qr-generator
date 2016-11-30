@@ -52,6 +52,7 @@
   direction in which we progress. It can be either :up or :down.")
    (filling-point :accessor filling-point
 		  :documentation "Point at which the next data module will be added.")
+   (pattern-grid :accessor pattern-grid)
    (grid :accessor grid
 	 :documentation "A representation of the QR code as an array. Bound by `write-data' once
   the QR code has been filled, grid is used to compute penalties for masks.")
@@ -60,8 +61,9 @@
   format pattern.")))
 
 (defmethod initialize-instance :after ((object qr-code) &key)
-  (with-slots (size version filling-point patterns) object
+  (with-slots (size version filling-point patterns pattern-grid) object
     (setf size (qr-code-size version))
+    (setf pattern-grid (make-array (list size size) :initial-element nil))
     (setf filling-point (make-instance 'point :x (1- size) :y (1- size)))
     (setf patterns (add-located-patterns 'finder-pattern '(top-left top-right bottom-left) version))
     (setf patterns
@@ -72,7 +74,9 @@
 		  (add-located-patterns 'dark-module '(bottom-left) version)
 		  (add-located-patterns 'format-pattern '(top-left top-right bottom-left) version)
 		  (when (>= version 7)
-		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))))
+		    (add-located-patterns 'version-pattern '(top-right bottom-left) version))))
+    (dolist (pattern patterns)
+      (settle pattern :grid pattern-grid))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; 			     Classes to represent geometrical objects
@@ -113,6 +117,15 @@
       (destructuring-bind (x y) position
 	(setf position (make-instance 'point :x x :y y))))))
 
+(defgeneric settle (object &key grid symbol)
+  (:documentation "Writes on GRID the SYMBOL over the extent of OBJECT."))
+
+(defmethod settle ((object square) &key grid symbol)
+  (destructuring-bind (xmin xmax ymin ymax) (extent object)
+    (loop for x from xmin below xmax do
+	 (loop for y from ymin below ymax
+	    do (setf (aref grid x y) symbol)))))
+
 ;;; Many shapes can be described by concentric squares. This macro makes it easier to generate a
 ;;; list of `square' objects representing a concentric shape. 
 (defmacro concentric-shape (&body specs)
@@ -150,6 +163,12 @@
 	     :documentation "Real coordinates in the module space. Since it depends on
   the containing object's size, it should not be set manually. Instead, set the abstract `location'
   and let it set the position for you.")))
+
+(defmethod settle ((object pattern) &key grid symbol)
+  (declare (ignorable symbol))
+  (with-slots (content) object
+    (dolist (shape content)
+      (settle shape :grid grid :symbol (type-of object)))))
 
 (defgeneric set-location (location-designator pattern parent-version)
   (:documentation "Set the location slot of PATTERN to LOCATION-DESIGNATOR and automatically move
@@ -606,7 +625,10 @@ VERSION"
       (double-side-step () (make-step point :side direction)))))
 
 (defun check-pattern-overlap (qr-code point)
-  (find t (patterns qr-code) :key (lambda (pattern) (overlap-p pattern point))))
+  (with-slots (pattern-grid) qr-code
+    (aref pattern-grid (x point) (y point)))
+  ;; (find t (patterns qr-code) :key (lambda (pattern) (overlap-p pattern point)))
+  )
 
 (defun flip-direction (direction)
   (if (eql direction :up) :down :up))
@@ -628,7 +650,7 @@ VERSION"
 	(setf filling-point next-point)
 	(setf step-move (next-step-move step-move))
 	(cond
-	  ((and overlapping-pattern (eql (type-of overlapping-pattern) 'vertical-timing-pattern))
+	  ((and overlapping-pattern (eql overlapping-pattern 'vertical-timing-pattern))
 	   (prog1 (progress qr-code)
 	     (setf step-move :side)))
 	  (overlapping-pattern (progress qr-code))
