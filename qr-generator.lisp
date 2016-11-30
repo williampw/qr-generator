@@ -271,34 +271,3 @@ to make it reach CAPACITY."
 				     (remainder (getf property-list :version))))
 	      property-list))))
 
-;; (defun format-string (error-correction-mode mask)
-;;   (let* ((ec-integer (getf (list :M 0 :L 1 :H 2 :Q 3) error-correction-mode))
-;; 	 (format-string (format nil "~2,'0b~3,'0b" ec-integer mask))
-;; 	 (format-poly (make-instance 'polynomial
-;; 				     :coefs (nreverse (mapcar #'parse-integer
-;; 							      (chunk format-string 1)))))
-;; 	 (ec-poly (format-divide format-poly))
-;; 	 (combined (make-instance 'polynomial
-;; 				  :coefs (append (coefs ec-poly) (coefs format-poly))))
-;; 	 (xored (add combined (make-instance 'polynomial :coefs '(0 1 0 0 1 0 0 0 0 0 1 0 1 0 1)))))
-;;     (format nil "~{~d~}" (reverse (coefs xored)))))
-
-;; (defun list-of-bits (integer length)
-;;   "Taken from Zach Bean"
-;;   (let ((bits '()))
-;;     (dotimes (index (max length (integer-length integer)) bits)
-;;       (push (if (logbitp index integer) 1 0) bits))))
-
-;; (defun format-string (ec-mode mask)
-;;   (let ((coefs (append (list-of-bits (getf (list :M 0 :L 1 :H 2 :Q 3) ec-mode) 2)
-;; 		       (list-of-bits mask 3)))
-;; 	)))
-
-(defun make-qr-code (text &optional (ec-mode "L"))
-  (multiple-value-bind (bits property-list) (text-to-binary text ec-mode)
-    (let ((qr-code (make-instance 'qr-code
-				  :version (getf property-list :version)
-				  :ec-mode (getf property-list :error-correction-mode))))
-      (write-data qr-code bits)
-      (finalize qr-code)
-      qr-code)))
