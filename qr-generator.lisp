@@ -25,7 +25,9 @@
 
 (defun bits (integer &optional (length nil))
   (unless length
-    (setf length (integer-length integer)))
+    (setf length (if (zerop integer)
+		     1
+		     (integer-length integer))))
   (let ((result (make-array length :element-type 'bit :initial-element 0))
 	(pointer (1- length)))
     (do ((i pointer (1- i))
@@ -74,9 +76,6 @@
       (intern level :keyword)
       (error "Unrecognized error correction level. Must be one of (L M Q H)")))
 
-(defun analyze-text (input-text)
-  "Reads an INPUT-TEXT string and returns a plist containg the suitable version and encoding mode.")
-
 (defun encoding-mode-indicator (encoding-mode)
   "Represents the encoding mode indicator on a 4-bit string."
   (let ((encoding-mode-indicator (assocval encoding-mode *encoding-mode-indicators*)))
@@ -90,15 +89,6 @@ error correction-mode and encoding mode."
      for capacity = (gethash key-triplet *character-capacities*)
      do (when (>= capacity string-length)
 	  (return version))))
-
-(defun get-qr-version-from-string (string error-correction-mode)
-  (let ((length (length string))
-	(encoding-mode (determine-encoding-mode string)))
-    (get-qr-version length error-correction-mode encoding-mode)))
-
-;; (defun padded-binary (decimal-number width)
-;;   "Represents DECIMAL-NUMBER in binary, with a 0 padding to the left until WIDTH is reached."
-;;   (format nil "~v,'0b" width decimal-number))
 
 (defun character-count-indicator-length (version encoding-mode)
   (let ((version-table (assocval version *count-indicator-length*)))
@@ -146,7 +136,7 @@ CHUNK-SIZE. Returns the list of subsequences."
   (let* ((length (length string))
 	 (encoding-mode (determine-encoding-mode string))
 	 (error-correction-mode (choose-error-correction correction-level))
-	 (version (get-qr-version-from-string string error-correction-mode))
+	 (version (get-qr-version length error-correction-mode encoding-mode))
 	 (capacity (qr-capacity version error-correction-mode))
 	 (mode-indicator (encoding-mode-indicator encoding-mode))
 	 (character-count-indic (character-count-indicator length version encoding-mode))
