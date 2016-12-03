@@ -63,21 +63,23 @@ same color should be avoided, on ARRAY."
 (defun penalty-2 (array)
   "Enforces the penalty rule that a square of side two of cells with the same color should be
 avoided, on ARRAY."
-  (* 3
-     (+ (match-pattern array '((0 0) (0 0)))
-	(match-pattern array '((255 255) (255 255))))))
+  (let ((white-pattern #2A((0 0) (0 0)))
+	(black-pattern #2A((255 255) (255 255))))
+   (* 3
+      (+ (match-pattern array white-pattern)
+	 (match-pattern array black-pattern)))))
 
 (defun penalty-3 (array)
   "Enforces the penalty rule that the pattern [black white black black black white black white white
 white], and the reverse, should be avoided row-wise and column-wise, on ARRAY."
   (let* ((base-pattern '(0 255 0 0 0 255 0 255 255 255 255))
-	 (pattern (list base-pattern))
-	 (anti-pattern (list (reverse base-pattern))))
+	 (pattern (make-array '(1 11) :initial-contents (list base-pattern)))
+	 (anti-pattern (make-array '(1 11) :initial-contents (list (reverse base-pattern)))))
     (* 40
        (+ (match-pattern array pattern)
 	  (match-pattern array anti-pattern)
-	  (match-pattern (transpose array) pattern)
-	  (match-pattern (transpose array) anti-pattern)))))
+	  (match-pattern array (transpose pattern))
+	  (match-pattern array (transpose anti-pattern))))))
 
 (defun penalty-4 (array)
   "Enforces a penalty rule based on the balance between white and black modules on ARRAY."
@@ -106,16 +108,13 @@ and actually flips the colors of the modules inside QR-CODE."
 
 (defun match-pattern (array pattern)
   "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal list."
-  (let* ((height (length pattern))
-	 (width (length (first pattern)))
-	 (pattern-array (make-array (list height width)
-				    :initial-contents pattern)))
+  (destructuring-bind (height width) (array-dimensions pattern)
     (destructuring-bind (nrows ncols) (array-dimensions array)
-      (loop for row upto(- nrows height) sum
+      (loop for row upto (- nrows height) sum
 	   (loop for col upto (- ncols width)
-		for row-end = (if (< (+ row height) nrows) (+ row height))
-		for col-end = (if (< (+ col width) ncols) (+ col width))
-	      count (equalp pattern-array
+	      for row-end = (if (< (+ row height) nrows) (+ row height))
+	      for col-end = (if (< (+ col width) ncols) (+ col width))
+	      count (equalp pattern
 			    (cl-slice:slice array
 					    (cons row row-end)
 					    (cons col col-end))))))))
