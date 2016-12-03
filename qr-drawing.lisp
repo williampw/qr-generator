@@ -625,8 +625,9 @@ VERSION"
       (double-side-step () (make-step point :side direction)))))
 
 (defun check-pattern-overlap (qr-code point)
-  (with-slots (pattern-grid) qr-code
-    (aref pattern-grid (x point) (y point)))
+  (unless (or (minusp (x point)) (minusp (y point)))
+    (with-slots (pattern-grid) qr-code
+      (aref pattern-grid (x point) (y point))))
   ;; (find t (patterns qr-code) :key (lambda (pattern) (overlap-p pattern point)))
   )
 
@@ -650,30 +651,20 @@ VERSION"
 	(setf filling-point next-point)
 	(setf step-move (next-step-move step-move))
 	(cond
-	  ((and overlapping-pattern (eql overlapping-pattern 'vertical-timing-pattern))
+	  ((eql overlapping-pattern 'vertical-timing-pattern)
 	   (prog1 (progress qr-code)
 	     (setf step-move :side)))
 	  (overlapping-pattern (progress qr-code))
 	  (t filling-point))))))
 
-(defgeneric check-inside (qr-code point)
-  (:documentation "Is POINT inside the QR-CODE? If so, return POINT."))
-
-(defmethod check-inside ((qr-code qr-code) (point point))
+(defun check-inside (qr-code point)
+  "Is POINT inside the QR-CODE? If so, return POINT."
   (cond
     ((or (minusp (x point))
 	 (>= (x point) (size qr-code)))
      (error 'out-of-bounds-error))
     ((minusp (y point)) (error "Beyond QR code capacity!"))
     (t point)))
-
-(defmethod check-inside ((qr-code qr-code) (point list))
-  (destructuring-bind (x y) point
-    (when (minusp y)
-      (error "Too much data."))
-    (if (or (minusp x) (>= x (size qr-code)))
-	(error 'out-of-bounds-error)      
-	point)))
 
 (define-condition out-of-bounds-error (error)
   ((text :initform "Below the lower limit or above the upper limit of the QR code")))
