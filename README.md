@@ -14,6 +14,7 @@ structural integrity, but just done by brute force and thousands of slaves. -- A
 (qr-generator:save qr-code "quote.png")
 
 ```
+![quote.png](quote.png)
 
 More documentation as soon as possible.
 
