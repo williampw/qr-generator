@@ -115,7 +115,14 @@ CHUNK-SIZE. Returns the list of subsequences."
   (:documentation "Represent DATA as a string of binary numbers."))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :numeric-mode)))
-  (vec-concatenate (mapcar (alexandria:compose #'bits #'parse-integer) (chunk data 3))))
+  (let ((result))
+    (vec-concatenate
+     (dolist (chk (chunk data 3) (nreverse result))
+       (push (case (length chk)
+	       (3 (bits (parse-integer chk) 10))
+	       (2 (bits (parse-integer chk) 7))
+	       (1 (bits (parse-integer chk) 4)))
+	     result)))))
 
 (defmethod encode-data ((data string) (encoding-mode (eql :alphanumeric-mode)))
   (flet ((represent-substring (substring)
