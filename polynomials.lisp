@@ -102,7 +102,7 @@
 (defun galois-exponent (integer)
   (declare ((mod 256) integer))
   "Return the power of two representing INTEGER in the Galois field."
-  (position (abs integer) *log-antilog*))
+  (position integer *log-antilog*))
 
 (defun galois-add (&rest numbers)
   (reduce #'logxor (remove-if #'null numbers)))
@@ -112,16 +112,6 @@
   (if (or (zerop a) (zerop b))
       0
       (nth-galois (mod (+ (galois-exponent a) (galois-exponent b)) 255))))
-
-;; (defmethod add (poly-1 poly-2)
-;;   (flet ((pad-polynomial (short-poly to-degree)
-;; 	   (append (coefs short-poly)
-;; 		   (loop repeat (- to-degree (degree short-poly))
-;; 		      collect 0))))
-;;     (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
-;;       (make-instance 'polynomial
-;; 		     :coefs (mapcar #'galois-add (coefs long-poly)
-;; 				    (pad-polynomial short-poly (degree long-poly)))))))
 
 (defmethod add (poly-1 poly-2)
   (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
@@ -150,20 +140,12 @@
      'polynomial
      :coefs (map '(vector (mod 256)) (lambda (x) (galois-product x constant)) coefs))))
 
-
 (defmethod multiply ((poly-1 polynomial) (poly-2 polynomial))
   (destructuring-bind (short-poly long-poly) (sort (list poly-1 poly-2) #'< :key #'degree)
    (loop for coef integer across (coefs short-poly)
       for degree-shift upfrom 0
       collect (shift-degree (multiply long-poly coef) degree-shift) into intermediate-products
       finally (return (reduce #'add intermediate-products)))))
-
-;; (defmethod multiply ((poly-1 polynomial) (poly-2 polynomial))
-;;   (let ((degree-shifts (alexandria:iota (1+ (degree poly-1)))))
-;;     (reduce #'add (mapcar (lambda (coef degree-shift)
-;; 			    (shift-degree (multiply poly-2 coef) degree-shift))
-;; 			  (coefs poly-1)
-;; 			  degree-shifts))))
 
 (defgeneric divide (poly-1 poly-2))
 
@@ -189,13 +171,3 @@
      finally (return result)) 
   "Polynomials, in the Galois field, used as generators in the Reed-Solomon process.")
 
-(defun format-divide (format-polynomial)
-  "Generate the bits for the format pattern, based on an odd division."
-  (loop with base-generator = (make-instance 'polynomial :coefs '(1 1 1 0 1 1 0 0 1 0 1))
-     for format-poly = (multiply (x-power-n 10) format-polynomial) then result
-     for generator-poly = (multiply (x-power-n (- (degree format-poly)
-						  (degree base-generator)))
-				    base-generator )
-     for result = (add format-poly generator-poly)
-     while (> (degree format-poly) 10)
-     finally (return result)))

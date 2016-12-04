@@ -55,6 +55,57 @@
   "Total penalty score of a `qr-code' represented by ARRAY."
   (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
 
+(defmacro match-pattern (list-pattern &key (reverse nil) (transpose nil))
+  (declare (ignorable reverse transpose))
+  (multiple-value-bind (black-index white-index pat-length)
+      (loop for index upfrom 0
+	 for color in list-pattern
+	 when (= color 0) collect index into black-index
+	 when (= color 255) collect index into white-index
+	 finally (return (values black-index white-index index)))
+    (flet ((row-match (black-index white-index array row col)
+	     `(and (= 255
+		      ,@(loop for idx in white-index collect
+			     `(aref ,array ,row (+ ,col ,idx))))
+		   (= 0
+		      ,@(loop for idx in black-index collect
+			     `(aref ,array ,row (+ ,col ,idx))))))
+	   (col-match (black-index white-index array row col)
+	     `(and (= 255
+		      ,@(loop for idx in white-index collect
+			     `(aref ,array (+ ,row ,idx) ,col)))
+		   (= 0
+		      ,@(loop for idx in black-index collect
+			     `(aref ,array (+ ,row ,idx) ,col)))))
+	   (reverse-index (index)
+	     (mapcar (lambda (x) (- pat-length x 1)) index)))
+      (alexandria:with-gensyms (array nrows ncols row col result)
+	`(lambda (,array)
+	   (destructuring-bind (,nrows ,ncols) (array-dimensions ,array)
+	     (let ((,result 0))
+	       (dotimes (,row ,nrows)
+		 (dotimes (,col (- ,ncols ,pat-length))
+		   (when
+		       ,(if reverse
+			    (let ((reverse-black (reverse-index black-index))
+				  (reverse-white (reverse-index white-index)))
+			      `(or ,(row-match black-index white-index array row col)
+				   ,(row-match reverse-black reverse-white array row col)))
+			    (row-match black-index white-index array row col)))
+		   (incf ,result)))
+	       ,(when transpose
+		  `(dotimes (,row (- ,nrows ,pat-length))
+		     (dotimes (,col ,ncols)
+		       (when
+			   ,(if reverse
+				(let ((reverse-black (reverse-index black-index))
+				      (reverse-white (reverse-index white-index)))
+				  `(or ,(col-match black-index white-index array row col)
+				       ,(col-match reverse-black reverse-white array row col)))
+				(col-match black-index white-index array row col))
+			 (incf ,result)))))
+	       ,result)))))))
+
 (defun penalty-1 (array)
   "Enforces the penalty rule that five or more contiguous cells, row-wise or column-wise,  with the
 same color should be avoided, on ARRAY."
@@ -63,23 +114,13 @@ same color should be avoided, on ARRAY."
 (defun penalty-2 (array)
   "Enforces the penalty rule that a square of side two of cells with the same color should be
 avoided, on ARRAY."
-  (let ((white-pattern #2A((0 0) (0 0)))
-	(black-pattern #2A((255 255) (255 255))))
-   (* 3
-      (+ (match-pattern array white-pattern)
-	 (match-pattern array black-pattern)))))
+  (* 3 (match-p2 array)))
 
 (defun penalty-3 (array)
   "Enforces the penalty rule that the pattern [black white black black black white black white white
 white], and the reverse, should be avoided row-wise and column-wise, on ARRAY."
-  (let* ((base-pattern '(0 255 0 0 0 255 0 255 255 255 255))
-	 (pattern (make-array '(1 11) :initial-contents (list base-pattern)))
-	 (anti-pattern (make-array '(1 11) :initial-contents (list (reverse base-pattern)))))
-    (* 40
-       (+ (match-pattern array pattern)
-	  (match-pattern array anti-pattern)
-	  (match-pattern array (transpose pattern))
-	  (match-pattern array (transpose anti-pattern))))))
+  (let ((matcher (match-pattern (0 255 0 0 0 255 0 255 255 255 255) :reverse t :transpose t)))
+    (* 40 (funcall matcher array))))
 
 (defun penalty-4 (array)
   "Enforces a penalty rule based on the balance between white and black modules on ARRAY."
@@ -106,18 +147,28 @@ and actually flips the colors of the modules inside QR-CODE."
       (flip-color module)))
   (setf (grid qr-code) (pixelize qr-code 1)))
 
-(defun match-pattern (array pattern)
-  "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal list."
-  (destructuring-bind (height width) (array-dimensions pattern)
-    (destructuring-bind (nrows ncols) (array-dimensions array)
-      (loop for row upto (- nrows height) sum
-	   (loop for col upto (- ncols width)
-	      for row-end = (if (< (+ row height) nrows) (+ row height))
-	      for col-end = (if (< (+ col width) ncols) (+ col width))
-	      count (equalp pattern
-			    (cl-slice:slice array
-					    (cons row row-end)
-					    (cons col col-end))))))))
+(defun match-p2 (array)
+  (destructuring-bind (nrows ncols) (array-dimensions array)
+    (let ((result 0))
+      (dotimes (row (1- nrows) result)
+	(dotimes (col (1- ncols))
+	  (when (= (aref array row col)
+		   (aref array (1+ row) col)
+		   (aref array row (1+ col))
+		   (aref array (1+ row) (1+ col)))
+	    (incf result)))))))
+
+;; (defun match-pattern (array pattern)
+;;   "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal array."
+;;   (destructuring-bind (height width) (array-dimensions pattern)
+;;     (destructuring-bind (nrows ncols) (array-dimensions array)
+;;       (loop for row upto (- nrows height) sum
+;; 	   (loop for col upto (- ncols width)
+;; 	      for row-end = (if (< (+ row height) nrows) (+ row height))
+;; 	      for col-end = (if (< (+ col width) ncols) (+ col width))
+;; 	      for row-idx = (cons row row-end)
+;; 	      for col-idx = (cons col col-end)
+;; 	      count (equalp pattern (cl-slice:slice array row-idx col-idx)))))))
 
 (defun greedy-contiguous (array start-row start-col)
   "Progresses in ARRAY from starting coordinates START-ROW & START-COL as long as the values read
