@@ -55,6 +55,14 @@
   "Total penalty score of a `qr-code' represented by ARRAY."
   (+ (penalty-1 array) (penalty-2 array) (penalty-3 array) (penalty-4 array)))
 
+(defmacro within-grid ((nrows ncols row col &optional (max-row nrows) (max-col ncols)) array
+		       &body body)
+  "Executes BODY while iterating over the ROW and COL of ARRAY"
+  `(destructuring-bind (,nrows ,ncols) (array-dimensions ,array)
+     (dotimes (,row ,max-row)
+       (dotimes (,col ,max-col)
+	 ,@body))))
+
 (defmacro match-pattern (list-pattern &key (reverse nil) (transpose nil))
   (declare (ignorable reverse transpose))
   (multiple-value-bind (black-index white-index pat-length)
@@ -81,30 +89,28 @@
 	     (mapcar (lambda (x) (- pat-length x 1)) index)))
       (alexandria:with-gensyms (array nrows ncols row col result)
 	`(lambda (,array)
-	   (destructuring-bind (,nrows ,ncols) (array-dimensions ,array)
-	     (let ((,result 0))
-	       (dotimes (,row ,nrows)
-		 (dotimes (,col (- ,ncols ,pat-length))
-		   (when
+	   (let ((,result 0))
+	     (within-grid (,nrows ,ncols ,row ,col ,nrows (- ,ncols ,pat-length)) ,array
+	       (when
+		   ,(if reverse
+			(let ((reverse-black (reverse-index black-index))
+			      (reverse-white (reverse-index white-index)))
+			  `(or ,(row-match black-index white-index array row col)
+			       ,(row-match reverse-black reverse-white array row col)))
+			(row-match black-index white-index array row col))
+		 (incf ,result)))
+
+	     (within-grid (,nrows ,ncols ,row ,col (- ,nrows ,pat-length)) ,array
+	       ,(when transpose
+		  `(when
 		       ,(if reverse
 			    (let ((reverse-black (reverse-index black-index))
 				  (reverse-white (reverse-index white-index)))
-			      `(or ,(row-match black-index white-index array row col)
-				   ,(row-match reverse-black reverse-white array row col)))
-			    (row-match black-index white-index array row col)))
-		   (incf ,result)))
-	       ,(when transpose
-		  `(dotimes (,row (- ,nrows ,pat-length))
-		     (dotimes (,col ,ncols)
-		       (when
-			   ,(if reverse
-				(let ((reverse-black (reverse-index black-index))
-				      (reverse-white (reverse-index white-index)))
-				  `(or ,(col-match black-index white-index array row col)
-				       ,(col-match reverse-black reverse-white array row col)))
-				(col-match black-index white-index array row col))
-			 (incf ,result)))))
-	       ,result)))))))
+			      `(or ,(col-match black-index white-index array row col)
+				   ,(col-match reverse-black reverse-white array row col)))
+			    (col-match black-index white-index array row col))
+		     (incf ,result))))
+	     ,result))))))
 
 (defun penalty-1 (array)
   "Enforces the penalty rule that five or more contiguous cells, row-wise or column-wise,  with the
@@ -148,27 +154,14 @@ and actually flips the colors of the modules inside QR-CODE."
   (setf (grid qr-code) (pixelize qr-code 1)))
 
 (defun match-p2 (array)
-  (destructuring-bind (nrows ncols) (array-dimensions array)
-    (let ((result 0))
-      (dotimes (row (1- nrows) result)
-	(dotimes (col (1- ncols))
-	  (when (= (aref array row col)
-		   (aref array (1+ row) col)
-		   (aref array row (1+ col))
-		   (aref array (1+ row) (1+ col)))
-	    (incf result)))))))
-
-;; (defun match-pattern (array pattern)
-;;   "Counts the matches of PATTERN in ARRAY. PATTERN must be a 2-dimensionnal array."
-;;   (destructuring-bind (height width) (array-dimensions pattern)
-;;     (destructuring-bind (nrows ncols) (array-dimensions array)
-;;       (loop for row upto (- nrows height) sum
-;; 	   (loop for col upto (- ncols width)
-;; 	      for row-end = (if (< (+ row height) nrows) (+ row height))
-;; 	      for col-end = (if (< (+ col width) ncols) (+ col width))
-;; 	      for row-idx = (cons row row-end)
-;; 	      for col-idx = (cons col col-end)
-;; 	      count (equalp pattern (cl-slice:slice array row-idx col-idx)))))))
+  (let ((result 0))
+    (within-grid (nrows ncols row col (1- nrows) (1- ncols)) array
+      (when (= (aref array row col)
+	       (aref array (1+ row) col)
+	       (aref array row (1+ col))
+	       (aref array (1+ row) (1+ col)))
+	(incf result)))
+    result))
 
 (defun greedy-contiguous (array start-row start-col)
   "Progresses in ARRAY from starting coordinates START-ROW & START-COL as long as the values read
@@ -201,6 +194,10 @@ are the same as in the first cell. Returns the number of contiguous modules of t
   "Returns a transposed (rows become columns and vice versa) copy of ARRAY."
   (array-operations:permute '(1 0) array))
 
-(defun count-array (array item)
+(defun count-array (array item &key (test #'=))
   "Count the occurences of ITEM in the 2-D ARRAY."
-  (count item (array-operations:flatten array)))
+  (let ((result 0))
+    (within-grid (nrows ncols row col) array
+      (when (funcall test (aref array row col) item)
+  	(incf result)))
+    result))
