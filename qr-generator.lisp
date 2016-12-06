@@ -62,9 +62,7 @@
 (defun determine-encoding-mode (string &optional (auto-upcase-string nil))
   "Checks STRING against all encoding modes and returns the suitable encoding mode. For now,
 :byte-mode is only set to t if alphanumeric is unsuitable."
-  (let* ((char-sequence (map 'list #'character (if auto-upcase-string
-						   (string-upcase string)
-						   string))))
+  (let* ((char-sequence (if auto-upcase-string (string-upcase string) string)))
     (cond
       ((every #'numeric-mode-p char-sequence) :numeric-mode)
       ((every #'alphanumeric-mode-p char-sequence) :alphanumeric-mode)
