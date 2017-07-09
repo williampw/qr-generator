@@ -22,7 +22,7 @@
 
 (defun make (text &optional (error-correction-level "L"))
   "Generate a `qr-code' instance that represents TEXT. ERROR-CORRECTION-LEVEL can optionnally
-  be set to L, M, Q or H in acending error of data redundancy. In other words, the higher the error
+  be set to L, M, Q or H in ascending error of data redundancy. In other words, the higher the error
   correction level, the more resistance to damage the QR code will be."
   (multiple-value-bind (bits property-list) (text-to-binary text error-correction-level)
     (let ((qr-code (make-instance 'qr-code :version (getf property-list :version)
